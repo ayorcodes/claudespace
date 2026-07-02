@@ -1,0 +1,29 @@
+[project]
+name = "claudespace"
+version = "0.1.0"
+description = "Open a Claude Code multi-pane iTerm2 workspace with one command (macOS only)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "iterm2>=2.10",
+]
+classifiers = [
+    "Operating System :: MacOS :: MacOS X",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+claudespace = "claudespace.cli:main"
+"claudespace:planner" = "claudespace.roles:planner"
+"claudespace:implementer" = "claudespace.roles:implementer"
+"claudespace:reviewer" = "claudespace.roles:reviewer"
+"claudespace:memory" = "claudespace.roles:memory"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["claudespace*"]
