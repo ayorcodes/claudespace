@@ -2,7 +2,7 @@
 description: Produce an implementation design
 ---
 
-Read `.ai/prompts/principal.prompt.md` completely.
+Read `~/.ai/prompts/principal.prompt.md` completely.
 
 Adopt its responsibilities, workflow, constraints and output format exactly.
 

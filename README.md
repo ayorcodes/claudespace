@@ -59,8 +59,9 @@ and effort level - no shell config required.
 command files into `~/.claude/commands` and their prompt files into
 `~/.ai/prompts`. Any pane opened by claudespace (or any other Claude Code
 session on the machine) can use them right away. Existing files with the
-same name are never overwritten, so local edits to a prompt survive
-reinstalls. Re-run the sync manually with:
+same name are always overwritten with the bundled version, so re-running
+the sync after an upgrade picks up fixes - any local edits to a prompt or
+command will be lost. Re-run the sync manually with:
 
 ```
 claudespace:sync-assets

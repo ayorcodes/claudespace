@@ -5,9 +5,11 @@ command+prompt pairs so any clone or pipx install of claudespace gets them
 registered globally, without the installer having to know their contents.
 
 Commands go to ``~/.claude/commands`` (global slash-commands); prompts go to
-``~/.ai/prompts`` (referenced by relative path from each command). Existing
-files are left untouched - this only fills in what's missing, so local edits
-to a prompt are never clobbered by a reinstall.
+``~/.ai/prompts`` (referenced by each command via its absolute ``~/.ai/prompts``
+path, so commands work regardless of the project's cwd). Existing
+files are always overwritten with the bundled version, so re-running this
+after an upgrade picks up fixes - any local edits to a prompt or command are
+not preserved.
 
 Also registers a global ``Stop`` hook that calls ``claudespace:handoff``
 after every turn. The hook itself is a fast no-op outside claudespace panes
@@ -33,15 +35,13 @@ SETTINGS_DEST = Path.home() / ".claude" / "settings.json"
 HANDOFF_HOOK_COMMAND = "claudespace:handoff"
 
 
-def _copy_missing(src_dir: resources.abc.Traversable, dest_dir: Path) -> int:
+def _copy_all(src_dir: resources.abc.Traversable, dest_dir: Path) -> int:
     dest_dir.mkdir(parents=True, exist_ok=True)
     copied = 0
     for entry in src_dir.iterdir():
         if not entry.is_file():
             continue
         dest = dest_dir / entry.name
-        if dest.exists():
-            continue
         with resources.as_file(entry) as src_path:
             shutil.copyfile(src_path, dest)
         copied += 1
@@ -82,11 +82,11 @@ def _install_handoff_hook() -> bool:
 
 
 def sync_assets() -> None:
-    """Copy bundled commands/prompts into place, skipping files that exist."""
+    """Copy bundled commands/prompts into place, overwriting any that exist."""
     assets = resources.files("claudespace.assets")
 
-    commands_copied = _copy_missing(assets.joinpath("commands"), COMMANDS_DEST)
-    prompts_copied = _copy_missing(assets.joinpath("prompts"), PROMPTS_DEST)
+    commands_copied = _copy_all(assets.joinpath("commands"), COMMANDS_DEST)
+    prompts_copied = _copy_all(assets.joinpath("prompts"), PROMPTS_DEST)
     hook_installed = _install_handoff_hook()
 
     logger.info(

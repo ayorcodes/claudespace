@@ -2,7 +2,7 @@
 description: Investigate the current implementation
 ---
 
-Read `.ai/prompts/researcher.prompt.md` completely.
+Read `~/.ai/prompts/researcher.prompt.md` completely.
 
 Adopt its responsibilities, workflow, constraints and output format exactly.
 

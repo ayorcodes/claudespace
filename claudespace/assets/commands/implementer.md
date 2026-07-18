@@ -2,7 +2,7 @@
 description: Implement an approved design
 ---
 
-Read `.ai/prompts/implementer.prompt.md` completely.
+Read `~/.ai/prompts/implementer.prompt.md` completely.
 
 Adopt its responsibilities, workflow, constraints and output format exactly.
 
