@@ -11,7 +11,7 @@ import sys
 import iterm2
 
 from claudespace import environment, update, utils, workspace
-from claudespace.config import DEFAULT_TEMPLATE, TEMPLATES, get_template
+from claudespace.config import DEFAULT_TEMPLATE, get_template, list_templates
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def main() -> None:
         return
 
     if args.list_templates:
-        for template_name in sorted(TEMPLATES):
+        for template_name in list_templates():
             print(template_name)
         return
 

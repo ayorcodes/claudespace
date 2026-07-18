@@ -119,9 +119,54 @@ state, not something to commit.
 
 ## Adding your own template
 
-Templates and roles are just data - see `claudespace/config.py`. Add a
-`Template` with your own pane commands and it's immediately available via
-`--template <name>`.
+Templates and roles are just data - see `claudespace/config.py` for the
+built-in ones (`native`, `opclaude`).
+
+The easiest way to add your own is a TOML file at
+`~/.config/claudespace/templates.toml` - no reinstall needed, and it
+survives `claudespace update` since it lives outside the installed package.
+One `[templates.<name>]` table per template, with a `layout` (must match a
+name registered in `claudespace/layouts.py`) and one `[[templates.<name>.panes]]`
+table per pane:
+
+```toml
+[templates.max]
+layout = "main_left_grid_right"
+
+[[templates.max.panes]]
+role = "principal"
+command = "claude2 --model claude-opus-4-8 --effort medium"
+
+[[templates.max.panes]]
+role = "implementer"
+command = "claudespace:implementer"
+
+[[templates.max.panes]]
+role = "reviewer"
+command = "claudespace:reviewer"
+
+[[templates.max.panes]]
+role = "planner"
+command = "claude2 --model claude-opus-4-8 --effort medium"
+
+[[templates.max.panes]]
+role = "researcher"
+command = "claudespace:researcher"
+```
+
+Each pane's `role` must match one of the roles the chosen layout produces
+(`main_left_grid_right` needs exactly `principal`, `implementer`,
+`reviewer`, `planner`, `researcher`). `command` is any shell command the
+pane runs on open - a `claudespace:` console-script, `claude` with your own
+flags, or something else entirely.
+
+Run it with `claudespace --template max`; see all available templates
+(built-in and user-defined) with `claudespace --list-templates`. A user
+template with the same name as a built-in one overrides it.
+
+Alternatively, add a `Template` directly in `claudespace/config.py` - it's
+immediately available via `--template <name>`, but edits there are lost on
+`claudespace update` since that reinstalls from a fresh clone.
 
 ## License
 
