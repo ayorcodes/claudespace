@@ -8,7 +8,7 @@
 
 set -eu
 
-GIT_URL="git+https://github.com/ayorcodes/claudespace.git"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "claudespace only works on macOS (it drives iTerm2, which has no Windows/Linux build)." >&2
@@ -26,13 +26,11 @@ if ! command -v pipx >/dev/null 2>&1; then
     pipx ensurepath
 fi
 
-echo "Installing claudespace..."
-if pipx install claudespace 2>/dev/null; then
-    :
-else
-    echo "Not yet on PyPI - installing from source instead."
-    pipx install "$GIT_URL"
-fi
+echo "Installing claudespace from $SCRIPT_DIR..."
+pipx install --force "$SCRIPT_DIR"
+
+echo "Registering bundled commands and prompts..."
+"$(pipx environment --value PIPX_BIN_DIR)/claudespace:sync-assets"
 
 echo "Done. Run 'claudespace' from any project folder to open a workspace."
 echo "(If 'claudespace' isn't found, open a new shell so pipx's PATH changes take effect.)"

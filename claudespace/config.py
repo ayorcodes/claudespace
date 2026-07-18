@@ -38,17 +38,31 @@ class Template:
 DEFAULT_TEMPLATE = "native"
 
 TEMPLATES: dict[str, Template] = {
-    # claudespace:planner/claudespace:implementer/claudespace:reviewer/claudespace:memory are console-scripts
+    # claudespace:principal/claudespace:implementer/claudespace:reviewer/
+    # claudespace:planner/claudespace:researcher are console-scripts
     # installed by this package (see roles.py), each pinned to its own
-    # model; scratch is always plain claude sonnet.
+    # model and effort level.
     "native": Template(
         layout="main_left_grid_right",
         panes=(
-            PaneConfig(role="planner", command="claudespace:planner"),
+            PaneConfig(role="principal", command="claudespace:principal"),
             PaneConfig(role="implementer", command="claudespace:implementer"),
             PaneConfig(role="reviewer", command="claudespace:reviewer"),
-            PaneConfig(role="memory", command="claudespace:memory"),
-            PaneConfig(role="scratch", command="claude --model sonnet"),
+            PaneConfig(role="planner", command="claudespace:planner"),
+            PaneConfig(role="researcher", command="claudespace:researcher"),
+        ),
+    ),
+    # opclaude is a claude-compatible CLI that routes to non-Anthropic
+    # models via --model; panes call it directly rather than through a
+    # claudespace: console-script.
+    "opclaude": Template(
+        layout="main_left_grid_right",
+        panes=(
+            PaneConfig(role="principal", command='opclaude --model "claude-ol-glm-5.2[1000K]"'),
+            PaneConfig(role="implementer", command='opclaude --model "claude-ol-minimax-m3[512K]"'),
+            PaneConfig(role="reviewer", command='opclaude --model "claude-ol-minimax-m3[512K]"'),
+            PaneConfig(role="planner", command='opclaude --model "claude-ol-glm-5.2[1000K]"'),
+            PaneConfig(role="researcher", command='opclaude --model "claude-ol-deepseek-v4-flash[1000K]"'),
         ),
     ),
 }

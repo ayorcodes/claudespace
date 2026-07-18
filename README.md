@@ -1,15 +1,15 @@
 # claudespace
 
-Open a full Claude Code workspace in iTerm2 with one command: a `planner`,
-`implementer`, `reviewer`, and `memory` pane, each pinned to a different
-model, plus a scratch pane. Re-running against the same folder attaches to
-the existing window instead of creating a duplicate.
+Open a full Claude Code workspace in iTerm2 with one command: a `principal`,
+`implementer`, `reviewer`, `planner`, and `researcher` pane, each pinned to
+a different model and effort level. Re-running against the same folder
+attaches to the existing window instead of creating a duplicate.
 
 ```
 ┌────────────┬──────────────┬──────────────┐
-│            │ implementer  │ memory       │
-│  planner   ├──────────────┼──────────────┤
-│            │ reviewer     │ scratch      │
+│            │ implementer  │ planner      │
+│  principal ├──────────────┼──────────────┤
+│            │ reviewer     │ researcher   │
 └────────────┴──────────────┴──────────────┘
 ```
 
@@ -38,26 +38,33 @@ curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.
 ```
 
 This installs [pipx](https://pipx.pypa.io) (via Homebrew) if you don't have
-it, then installs claudespace through it in an isolated environment.
+it, then installs claudespace through it in an isolated environment, along
+with five small console-scripts (`claudespace:principal`,
+`claudespace:implementer`, `claudespace:reviewer`, `claudespace:planner`,
+`claudespace:researcher`) that each just launch `claude` pinned to a model
+and effort level - no shell config required.
 
-Or, if you already manage Python tooling yourself:
+| role        | model           | effort |
+|-------------|-----------------|--------|
+| principal   | claude-opus-4-8 | medium |
+| implementer | claude-sonnet-5 | medium |
+| reviewer    | claude-sonnet-5 | medium |
+| planner     | claude-opus-4-8 | medium |
+| researcher  | claude-sonnet-5 | low    |
+
+### Bundled commands and prompts
+
+`install.sh` also registers five global slash-commands - `/planner`,
+`/principal`, `/researcher`, `/implementer`, `/reviewer` - by copying their
+command files into `~/.claude/commands` and their prompt files into
+`~/.ai/prompts`. Any pane opened by claudespace (or any other Claude Code
+session on the machine) can use them right away. Existing files with the
+same name are never overwritten, so local edits to a prompt survive
+reinstalls. Re-run the sync manually with:
 
 ```
-pipx install claudespace
-# or
-pip install claudespace
+claudespace:sync-assets
 ```
-
-This installs the `claudespace` command plus four small console-scripts
-(`claudespace:planner`, `claudespace:implementer`, `claudespace:reviewer`, `claudespace:memory`) that each just
-launch `claude` pinned to a model - no shell config required.
-
-| role          | model  |
-|---------------|--------|
-| planner       | opus   |
-| implementer   | sonnet |
-| reviewer      | opus   |
-| memory        | haiku  |
 
 ### First-run setup
 

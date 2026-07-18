@@ -34,36 +34,38 @@ async def _main_left_grid_right(root: "iterm2.Session") -> dict[str, "iterm2.Ses
     """Layout matching the requested workspace shape.
 
     ┌────────────┬──────────────┬──────────────┐
-    │            │ implementer  │ memory       │
-    │  planner   ├──────────────┼──────────────┤
-    │            │ reviewer     │ scratch      │
+    │            │ implementer  │ planner      │
+    │  principal ├──────────────┼──────────────┤
+    │            │ reviewer     │ researcher   │
     └────────────┴──────────────┴──────────────┘
 
     ``vertical=True`` splits create a left/right divider (side by side);
     ``vertical=False`` splits create a top/bottom divider (stacked).
     """
-    planner = root
-    middle_col = await planner.async_split_pane(vertical=True)
+    principal = root
+    middle_col = await principal.async_split_pane(vertical=True)
     right_col = await middle_col.async_split_pane(vertical=True)
 
     implementer = middle_col
     reviewer = await middle_col.async_split_pane(vertical=False)
 
-    memory = right_col
-    scratch = await right_col.async_split_pane(vertical=False)
+    planner = right_col
+    researcher = await right_col.async_split_pane(vertical=False)
 
     return {
-        "planner": planner,
+        "principal": principal,
         "implementer": implementer,
         "reviewer": reviewer,
-        "memory": memory,
-        "scratch": scratch,
+        "planner": planner,
+        "researcher": researcher,
     }
 
 
 LAYOUTS: dict[str, Layout] = {
     "main_left_grid_right": Layout(
-        roles=frozenset({"planner", "implementer", "reviewer", "memory", "scratch"}),
+        roles=frozenset(
+            {"principal", "implementer", "reviewer", "planner", "researcher"}
+        ),
         build=_main_left_grid_right,
     ),
 }

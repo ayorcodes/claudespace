@@ -16,10 +16,12 @@ classifiers = [
 
 [project.scripts]
 claudespace = "claudespace.cli:main"
+"claudespace:principal" = "claudespace.roles:principal"
 "claudespace:planner" = "claudespace.roles:planner"
 "claudespace:implementer" = "claudespace.roles:implementer"
 "claudespace:reviewer" = "claudespace.roles:reviewer"
-"claudespace:memory" = "claudespace.roles:memory"
+"claudespace:researcher" = "claudespace.roles:researcher"
+"claudespace:sync-assets" = "claudespace.assets_sync:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -27,3 +29,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["claudespace*"]
+
+[tool.setuptools.package-data]
+"claudespace.assets" = ["commands/*.md", "prompts/*.md"]
