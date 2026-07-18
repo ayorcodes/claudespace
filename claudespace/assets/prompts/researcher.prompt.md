@@ -321,7 +321,7 @@ When complete:
 
 1. Persist the Technical Brief according to the project's documentation standards. This is the one and only copy - do not also duplicate it into a fixed claudespace path.
 
-2. If running inside a claudespace workspace (the `CLAUDESPACE_ROOT` environment variable is set), create `$CLAUDESPACE_ROOT/.claudespace/researcher.done` whose sole content is the project-root-relative path to the Technical Brief you just persisted in step 1 (for example `docs/research/2026-07-18-multi-tenant-support.md`). This hands the brief off to the planner pane automatically. Write this marker last, only once the brief is fully written and persisted.
+2. If running inside a claudespace workspace (the `CLAUDESPACE_ROOT` environment variable is set), create `$CLAUDESPACE_ROOT/.claudespace/researcher.done` whose sole content is the project-root-relative path to the Technical Brief you just persisted in step 1 (for example `docs/research/2026-07-18-multi-tenant-support.md`). Create the `.claudespace` directory first if it does not already exist (`mkdir -p`). This hands the brief off to the planner pane automatically. Write this marker last, only once the brief is fully written and persisted.
 
 3. Report:
 

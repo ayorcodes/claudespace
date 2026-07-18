@@ -15,6 +15,7 @@ import iterm2
 
 from claudespace import iterm as iterm_ops
 from claudespace.config import get_template
+from claudespace.pipeline import MARKER_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ async def open_workspace(
             return
 
     logger.info("Building workspace '%s' (template '%s')", resolved_root, template_name)
+    os.makedirs(os.path.join(resolved_root, MARKER_DIR), exist_ok=True)
     window = await iterm_ops.build_workspace(
         connection,
         marker=resolved_root,
