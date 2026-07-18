@@ -292,11 +292,24 @@ Only genuine engineering uncertainty.
 
 ---
 
+# Bouncing an ambiguous Planning Brief
+
+If the Planning Brief is too ambiguous to design against - a genuine product decision is missing, not just an engineering detail you can reasonably infer - do not guess. Bounce it back instead:
+
+1. Do not persist an implementation design.
+2. If running inside a claudespace workspace (`CLAUDESPACE_ROOT` is set), write a short note describing the specific ambiguity and what decision is needed. Follow the project's documentation standards for where notes like this live; if none apply, write it to `$CLAUDESPACE_ROOT/.claudespace/principal-ambiguity-note.md`. Then create `$CLAUDESPACE_ROOT/.claudespace/principal.blocked` whose sole content is the project-root-relative path to that note.
+3. Report the ambiguity and stop. Do not proceed to design.
+
+Use this rarely - only for product-scope ambiguity, never for engineering decisions you are expected to resolve yourself.
+
+---
+
 # Completion
 
 When complete:
 
-- persist the implementation design
+- persist the implementation design according to the project's documentation standards - this is the one and only copy, do not also duplicate it into a fixed claudespace path
+- if running inside a claudespace workspace (`CLAUDESPACE_ROOT` is set), create `$CLAUDESPACE_ROOT/.claudespace/principal.done` whose sole content is the project-root-relative path to the implementation design you just persisted. Write this marker last, only once the design is fully written and persisted - this hands the design off to the implementer pane automatically
 - report the document location
 - summarize the chosen architecture
 - identify remaining engineering questions

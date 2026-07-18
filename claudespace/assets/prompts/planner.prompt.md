@@ -283,9 +283,11 @@ Examples:
 
 When complete:
 
-1. Persist the Planning Brief according to the project's documentation standards.
+1. Persist the Planning Brief according to the project's documentation standards. This is the one and only copy - do not also duplicate it into a fixed claudespace path.
 
-2. Report:
+2. If running inside a claudespace workspace (the `CLAUDESPACE_ROOT` environment variable is set), create `$CLAUDESPACE_ROOT/.claudespace/planner.done` whose sole content is the project-root-relative path to the Planning Brief you just persisted in step 1. This hands the brief off to the principal pane automatically. Write this marker last, only once the brief is fully written and persisted. If you were invoked because principal bounced a previous plan back (a `$CLAUDESPACE_ROOT/.claudespace/principal.blocked` file exists, containing the path to a note explaining why), read that note before revising.
+
+3. Report:
 
 - Planning completed
 - Planning Brief location

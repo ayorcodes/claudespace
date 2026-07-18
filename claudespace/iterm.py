@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 WORKSPACE_VAR = "user.workspaceLauncherWorkspace"
 ROLE_VAR = "user.workspaceLauncherRole"
 
+# Whether forward (success) handoffs auto-submit into the next pane or only
+# prefill it. Backward (blocked/rejected) handoffs always prefill-only,
+# regardless of this setting - see handoff.py.
+AUTO_HANDOFF_VAR = "user.workspaceLauncherAutoHandoff"
+
 # Marker printed by claude's own input box once its TUI is ready to accept
 # text - polled for after launch so the role prefill lands in claude's
 # input rather than the shell that launched it (or an intervening dialog,
@@ -58,15 +63,36 @@ async def _wait_for_claude_prompt(session: "iterm2.Session") -> bool:
 
 async def _prefill_role_command(role: str, session: "iterm2.Session") -> None:
     """Wait for claude to be ready in ``session``, then prefill its input."""
+    await send_role_prompt(role, session, text=f"/{role} ", submit=False)
+
+
+async def send_role_prompt(
+    role: str, session: "iterm2.Session", *, text: str, submit: bool
+) -> None:
+    """Wait for claude to be ready in ``session``, then type ``text`` into it.
+
+    ``submit`` controls whether the input is submitted afterwards - ``False``
+    leaves the text sitting in the input box for the user to review and
+    press enter themselves, ``True`` submits it immediately. Used both for
+    the initial role-command prefill at workspace build time and for
+    pipeline handoffs between panes.
+
+    The submit keystroke is sent as its own ``async_send_text`` call rather
+    than appended to ``text`` - claude's TUI does not treat a trailing "\\n"
+    within the same call as pressing enter, so appending it silently leaves
+    the prompt typed but unsubmitted.
+    """
     ready = await _wait_for_claude_prompt(session)
     if not ready:
         logger.warning(
             "Gave up waiting for claude to be ready in role '%s' - skipping "
-            "command prefill",
+            "prompt send",
             role,
         )
         return
-    await session.async_send_text(f"/{role} ")
+    await session.async_send_text(text)
+    if submit:
+        await session.async_send_text("\r")
 
 
 async def find_workspace_window(app: iterm2.App, marker: str) -> iterm2.Window | None:
@@ -91,12 +117,15 @@ async def build_workspace(
     marker: str,
     root: str,
     template: Template,
+    auto_handoff: bool = False,
 ) -> iterm2.Window:
     """Create a new window, lay out its panes, and launch each pane's command.
 
     Every pane is tagged with ``WORKSPACE_VAR``/``ROLE_VAR`` so future runs
     can detect this workspace and identify individual panes. ``marker``
     identifies the workspace for dedup purposes - the resolved root path.
+    ``auto_handoff`` is stored on every pane so ``handoff.py`` can look it up
+    from any one of them without needing to enumerate the whole window.
     """
     layout = get_layout(template.layout)
 
@@ -118,7 +147,11 @@ async def build_workspace(
         session = sessions_by_role[pane.role]
         await session.async_set_variable(WORKSPACE_VAR, marker)
         await session.async_set_variable(ROLE_VAR, pane.role)
-        await session.async_send_text(f"cd {root} && {pane.command}\n")
+        await session.async_set_variable(AUTO_HANDOFF_VAR, auto_handoff)
+        await session.async_send_text(
+            f"cd {root} && export CLAUDESPACE_ROOT={root} && "
+            f"export CLAUDESPACE_ROLE={pane.role} && {pane.command}\n"
+        )
         logger.info("Launched %s (%s) in role '%s'", pane.command, root, pane.role)
 
     await asyncio.gather(
@@ -134,3 +167,39 @@ async def build_workspace(
 async def activate_window(window: iterm2.Window) -> None:
     """Bring an existing workspace window to the foreground."""
     await window.async_activate()
+
+
+async def find_role_session(
+    app: iterm2.App, *, marker: str, role: str
+) -> iterm2.Session | None:
+    """Find the session tagged with ``role`` inside the workspace ``marker``.
+
+    Used by ``handoff.py`` to locate the destination pane for a pipeline
+    handoff. Returns ``None`` if the workspace or role isn't found (e.g. the
+    window was closed, or a template without that role was used).
+    """
+    for window in app.windows:
+        for tab in window.tabs:
+            for session in tab.sessions:
+                workspace_value = await session.async_get_variable(WORKSPACE_VAR)
+                if workspace_value != marker:
+                    continue
+                role_value = await session.async_get_variable(ROLE_VAR)
+                if role_value == role:
+                    return session
+    return None
+
+
+async def get_auto_handoff(app: iterm2.App, *, marker: str) -> bool:
+    """Read the auto-handoff toggle for the workspace tagged ``marker``.
+
+    Defaults to ``False`` (prefill-only) if the workspace can't be found.
+    """
+    for window in app.windows:
+        for tab in window.tabs:
+            for session in tab.sessions:
+                workspace_value = await session.async_get_variable(WORKSPACE_VAR)
+                if workspace_value == marker:
+                    value = await session.async_get_variable(AUTO_HANDOFF_VAR)
+                    return bool(value)
+    return False

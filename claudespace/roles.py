@@ -12,9 +12,21 @@ import sys
 
 
 def _exec_claude(model: str, effort: str) -> None:
-    """Replace this process with ``claude --model <model> --effort <effort> <extra args>``."""
-    os.execvp(
-        "claude", ["claude", "--model", model, "--effort", effort, *sys.argv[1:]]
+    """Replace this process with ``claude --model <model> --effort <effort> <extra args>``.
+
+    Sets ``CLAUDESPACE_ROLE`` so this pane's Claude process (and anything it
+    triggers, e.g. the Stop hook) knows which pipeline role it is running as.
+    ``CLAUDESPACE_ROOT`` is expected to already be set by the shell command
+    that launched this pane (``workspace.py`` sends ``cd <root> && ...``);
+    fall back to the current directory if it is somehow missing.
+    """
+    role = sys._getframe(1).f_code.co_name
+    env = dict(os.environ, CLAUDESPACE_ROLE=role)
+    env.setdefault("CLAUDESPACE_ROOT", os.getcwd())
+    os.execvpe(
+        "claude",
+        ["claude", "--model", model, "--effort", effort, *sys.argv[1:]],
+        env,
     )
 
 

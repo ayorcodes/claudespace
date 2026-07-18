@@ -240,5 +240,6 @@ When complete:
 - summarize the review
 - present findings
 - issue a verdict
+- if running inside a claudespace workspace (`CLAUDESPACE_ROOT` is set): this review has no other persisted home by default, so write the full review output above (including the verdict) to `$CLAUDESPACE_ROOT/.claudespace/review.md` (unless the project's own documentation standards define a location for review notes, in which case use that instead). If the verdict is CHANGES REQUIRED, also create `$CLAUDESPACE_ROOT/.claudespace/reviewer.blocked` whose sole content is the project-root-relative path to that review, so it can be routed back to the implementer pane. If the verdict is PASS, do not create a `.blocked` file - there is nothing further to hand off; report the result and stop.
 
 Your responsibility ends here.

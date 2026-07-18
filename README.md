@@ -88,6 +88,24 @@ claudespace --new           # force a new window even if one exists
 claudespace --list-templates
 ```
 
+## Pipeline handoff
+
+Each role's prompt writes its output to `.claudespace/<artifact>.md` in the
+workspace root and, on completion, a `.done` marker. A globally-installed
+Stop hook (`claudespace:handoff`, wired into `~/.claude/settings.json` by
+`sync-assets`) watches for fresh markers and sends the next role's prompt
+into its pane: researcher → planner → principal → implementer → reviewer.
+
+By default handoffs only *prefill* the next pane's input - you press enter
+to advance. Pass `--auto-handoff` at launch to have successful handoffs
+submit automatically. Rejected or blocked work (principal bouncing a vague
+Planning Brief back to planner, reviewer returning CHANGES REQUIRED to
+implementer) always prefills only, regardless of `--auto-handoff` - those
+always wait for you.
+
+Add `.claudespace/` to your project's `.gitignore` - it's pipeline scratch
+state, not something to commit.
+
 ## Adding your own template
 
 Templates and roles are just data - see `claudespace/config.py`. Add a

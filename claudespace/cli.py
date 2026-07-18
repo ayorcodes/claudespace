@@ -39,6 +39,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Always build a new workspace window, even if one already exists.",
     )
     parser.add_argument(
+        "--auto-handoff",
+        action="store_true",
+        help="Automatically submit pipeline handoffs between panes on success "
+        "(researcher->planner->principal->implementer->reviewer). Without "
+        "this flag, handoffs only prefill the next pane's input - you press "
+        "enter to advance. Rejected/blocked handoffs always prefill-only, "
+        "regardless of this setting.",
+    )
+    parser.add_argument(
         "--list-templates",
         action="store_true",
         help="List available template names and exit.",
@@ -50,9 +59,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(
-    connection: iterm2.Connection, *, root: str, template: str, force_new: bool
+    connection: iterm2.Connection,
+    *,
+    root: str,
+    template: str,
+    force_new: bool,
+    auto_handoff: bool,
 ) -> None:
-    await workspace.open_workspace(connection, root, template, force_new)
+    await workspace.open_workspace(
+        connection, root, template, force_new, auto_handoff=auto_handoff
+    )
 
 
 def main() -> None:
@@ -82,7 +98,11 @@ def main() -> None:
         utils.launch_iterm()
 
     runner = functools.partial(
-        _run, root=args.root, template=args.template, force_new=args.new
+        _run,
+        root=args.root,
+        template=args.template,
+        force_new=args.new,
+        auto_handoff=args.auto_handoff,
     )
     try:
         iterm2.run_until_complete(runner, retry=True)
