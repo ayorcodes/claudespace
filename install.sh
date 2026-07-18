@@ -8,7 +8,29 @@
 
 set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_URL="https://github.com/ayorcodes/claudespace.git"
+CLEANUP_DIR=""
+cleanup() {
+    [ -n "$CLEANUP_DIR" ] && rm -rf "$CLEANUP_DIR"
+}
+trap cleanup EXIT
+
+# When run as `curl ... | sh`, $0 is the shell itself, not this file, so
+# dirname "$0" resolves to the caller's cwd rather than the repo root.
+# Detect that case (this file won't actually exist at $0) and clone the
+# repo into a temp dir instead of trusting the cwd.
+if [ -f "$0" ] && [ "$(basename "$0")" = "install.sh" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+else
+    if ! command -v git >/dev/null 2>&1; then
+        echo "git is required to install claudespace via curl | sh." >&2
+        exit 1
+    fi
+    CLEANUP_DIR="$(mktemp -d)"
+    echo "Cloning claudespace into a temporary directory..."
+    git clone --depth 1 "$REPO_URL" "$CLEANUP_DIR" >&2
+    SCRIPT_DIR="$CLEANUP_DIR"
+fi
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "claudespace only works on macOS (it drives iTerm2, which has no Windows/Linux build)." >&2
