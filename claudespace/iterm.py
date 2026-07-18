@@ -169,6 +169,14 @@ async def activate_window(window: iterm2.Window) -> None:
     await window.async_activate()
 
 
+async def activate_session(session: "iterm2.Session") -> None:
+    """Select ``session``'s tab and focus it, so the active-pane highlight
+    follows a handoff to its destination pane instead of staying on
+    whichever pane the user last had focused.
+    """
+    await session.async_activate()
+
+
 async def find_role_session(
     app: iterm2.App, *, marker: str, role: str
 ) -> iterm2.Session | None:

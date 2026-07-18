@@ -111,6 +111,7 @@ async def _send_handoff(
     await iterm_ops.send_role_prompt(
         destination_role, destination, text=prompt_text, submit=submit
     )
+    await iterm_ops.activate_session(destination)
     _mark_handed_off(marker_path)
     logger.info(
         "Handed off %s -> %s (submit=%s)", role, destination_role, submit
