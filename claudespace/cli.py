@@ -10,7 +10,7 @@ import sys
 
 import iterm2
 
-from claudespace import environment, utils, workspace
+from claudespace import environment, update, utils, workspace
 from claudespace.config import DEFAULT_TEMPLATE, TEMPLATES, get_template
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="claudespace",
         description="Build or attach to an iTerm2 development workspace for a folder.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser(
+        "update",
+        help="Pull the latest claudespace from git, reinstall via pipx, "
+        "and resync bundled commands/prompts.",
     )
     parser.add_argument(
         "--root",
@@ -78,6 +84,10 @@ def main() -> None:
     utils.setup_logging(args.verbose)
 
     environment.require_macos()
+
+    if args.command == "update":
+        update.run_update()
+        return
 
     if args.list_templates:
         for template_name in sorted(TEMPLATES):

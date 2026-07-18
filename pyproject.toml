@@ -23,6 +23,7 @@ claudespace = "claudespace.cli:main"
 "claudespace:researcher" = "claudespace.roles:researcher"
 "claudespace:sync-assets" = "claudespace.assets_sync:main"
 "claudespace:handoff" = "claudespace.handoff:main"
+"claudespace:update" = "claudespace.update:main"
 
 [build-system]
 requires = ["setuptools>=68"]

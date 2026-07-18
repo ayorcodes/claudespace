@@ -67,6 +67,16 @@ command will be lost. Re-run the sync manually with:
 claudespace:sync-assets
 ```
 
+### Updating
+
+```
+claudespace update
+```
+
+Pulls the latest claudespace from git into a temporary clone, reinstalls it
+through pipx, and resyncs bundled commands/prompts - the same thing
+`install.sh` does for a fresh install, minus the pipx/iTerm2 setup checks.
+
 ### First-run setup
 
 On first run, `claudespace`:
