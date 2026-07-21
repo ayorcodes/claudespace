@@ -18,6 +18,8 @@ Your responsibility ends after issuing a verdict.
 
 # Principles
 
+Do the review yourself in this session. Do not spawn subagents, forks, or background tasks (the Agent tool or equivalent) for reading the diff, running verification commands, or checking the repository - that is the routine work of this role and belongs inline. The only exception is a task the user explicitly names as needing a separate agent; never delegate on your own initiative to "save context" or "parallelize."
+
 Assume nothing.
 
 Trust nothing.
@@ -230,6 +232,7 @@ CHANGES REQUIRED
 - invent requirements
 - reject code because of personal preference
 - suggest unrelated improvements
+- spawn subagents/forks for routine review or verification work
 
 ---
 

@@ -18,6 +18,8 @@ Your responsibility ends once the implementation has been completed and verified
 
 # Principles
 
+Do the work yourself in this session. Do not spawn subagents, forks, or background tasks (the Agent tool or equivalent) for reading files, running commands, writing code, or verification - all of that is routine work for this role and belongs inline. The only exception is a task the user explicitly names as needing a separate agent; never delegate on your own initiative to "save context" or "parallelize."
+
 The implementation design is the source of truth.
 
 Follow it faithfully.
@@ -210,6 +212,7 @@ Only implementation risks.
 - refactor unrelated code
 - skip verification
 - claim commands passed without running them
+- spawn subagents/forks for routine implementation or verification work
 
 ---
 

@@ -29,6 +29,15 @@ ROLE_VAR = "user.workspaceLauncherRole"
 # regardless of this setting - see handoff.py.
 AUTO_HANDOFF_VAR = "user.workspaceLauncherAutoHandoff"
 
+# The doc path (a done-marker's contents) that identifies the pipeline run
+# currently occupying this workspace, and the unix timestamp it started at -
+# both set on every pane the moment a researcher.done kicks off a run. Used
+# by handoff.py to detect when a fresh researcher.done names a *different*
+# doc, meaning a new topic is starting in an already-used workspace. Unset
+# until the first run's researcher hands off.
+RUN_DOC_VAR = "user.workspaceLauncherRunDoc"
+RUN_STARTED_VAR = "user.workspaceLauncherRunStarted"
+
 # Marker printed by claude's own input box once its TUI is ready to accept
 # text - polled for after launch so the role prefill lands in claude's
 # input rather than the shell that launched it (or an intervening dialog,
@@ -211,3 +220,53 @@ async def get_auto_handoff(app: iterm2.App, *, marker: str) -> bool:
                     value = await session.async_get_variable(AUTO_HANDOFF_VAR)
                     return bool(value)
     return False
+
+
+async def _each_workspace_session(app: iterm2.App, *, marker: str):
+    """Yield every session tagged with workspace ``marker``."""
+    for window in app.windows:
+        for tab in window.tabs:
+            for session in tab.sessions:
+                workspace_value = await session.async_get_variable(WORKSPACE_VAR)
+                if workspace_value == marker:
+                    yield session
+
+
+async def get_run_doc(app: iterm2.App, *, marker: str) -> tuple[str | None, float | None]:
+    """Read the workspace's current run doc path and start timestamp.
+
+    Both are ``None`` if the workspace can't be found or no run has started
+    yet in it (a freshly built workspace, before researcher's first
+    handoff).
+    """
+    async for session in _each_workspace_session(app, marker=marker):
+        doc = await session.async_get_variable(RUN_DOC_VAR)
+        started = await session.async_get_variable(RUN_STARTED_VAR)
+        return doc or None, float(started) if started else None
+    return None, None
+
+
+async def set_run_doc(
+    app: iterm2.App, *, marker: str, doc: str, started_at: float
+) -> None:
+    """Stamp every pane in workspace ``marker`` with the active run's doc
+    path and start time, so the next researcher.done can tell whether it's
+    continuing this run or starting a new one.
+    """
+    async for session in _each_workspace_session(app, marker=marker):
+        await session.async_set_variable(RUN_DOC_VAR, doc)
+        await session.async_set_variable(RUN_STARTED_VAR, started_at)
+
+
+async def send_clear(session: "iterm2.Session") -> None:
+    """Wait for claude to be ready in ``session``, then submit ``/clear``.
+
+    Used to reset a pane's conversation when a new pipeline run starts in
+    an already-used workspace - see handoff.py's new-topic detection.
+    """
+    ready = await _wait_for_claude_prompt(session)
+    if not ready:
+        logger.warning("Gave up waiting for claude to be ready - skipping /clear")
+        return
+    await session.async_send_text("/clear")
+    await session.async_send_text("\r")

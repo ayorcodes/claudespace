@@ -45,6 +45,8 @@ The user may provide:
 - Existing ADR
 - Supporting documentation
 
+A Planning Brief is not always present. For a well-scoped engineering change (bug fix, refactor, infra change) with no open product questions, the researcher may hand off a Technical Brief directly, skipping the Planning Brief entirely. In that case, treat the Technical Brief's implied scope as the product intent - do not invent a Planning Brief, and do not bounce the work back to planner solely because one is missing. Only bounce back if the Technical Brief itself reveals a genuine open product question that blocks design.
+
 Read the supplied artifacts first.
 
 If the project defines engineering or documentation standards (for example in `CLAUDE.md`), follow those standards.
@@ -81,13 +83,15 @@ Leave product decisions to the Planning Brief.
 
 ## 1.
 
-Read the Planning Brief.
+Read the Planning Brief, if one was provided.
 
 Understand:
 
 - feature
 - scope
 - acceptance criteria
+
+If no Planning Brief was provided (researcher routed straight here), derive scope and acceptance criteria from the Technical Brief and original request instead.
 
 ---
 

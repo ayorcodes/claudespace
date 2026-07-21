@@ -12,6 +12,11 @@ Users can also add their own templates without touching this file (and
 without losing them on ``claudespace update``) by dropping a TOML file at
 ``~/.config/claudespace/templates.toml``. See ``load_user_templates`` for
 the file format.
+
+The ``native`` template itself lives in ``templates.toml`` too - see
+``ensure_native_template_seeded``, which is called by ``sync_assets()`` on
+every install/update so a missing or stale file always gets ``native``
+written as its first entry.
 """
 
 from __future__ import annotations
@@ -47,6 +52,10 @@ class Template:
 
 DEFAULT_TEMPLATE = "native"
 
+# Built-in templates that ship purely as Python fallbacks in case
+# ``templates.toml`` is unreadable or hasn't been seeded yet. The
+# authoritative copy of "native" lives in ``templates.toml`` once
+# ``ensure_native_template_seeded`` has run (see below).
 TEMPLATES: dict[str, Template] = {
     # claudespace:principal/claudespace:implementer/claudespace:reviewer/
     # claudespace:planner/claudespace:researcher are console-scripts
@@ -62,20 +71,31 @@ TEMPLATES: dict[str, Template] = {
             PaneConfig(role="researcher", command="claudespace:researcher"),
         ),
     ),
-    # opclaude is a claude-compatible CLI that routes to non-Anthropic
-    # models via --model; panes call it directly rather than through a
-    # claudespace: console-script.
-    "opclaude": Template(
-        layout="main_left_grid_right",
-        panes=(
-            PaneConfig(role="principal", command='opclaude --model "claude-ol-glm-5.2[1000K]"'),
-            PaneConfig(role="implementer", command='opclaude --model "claude-ol-minimax-m3[512K]"'),
-            PaneConfig(role="reviewer", command='opclaude --model "claude-ol-minimax-m3[512K]"'),
-            PaneConfig(role="planner", command='opclaude --model "claude-ol-glm-5.2[1000K]"'),
-            PaneConfig(role="researcher", command='opclaude --model "claude-ol-deepseek-v4-flash[1000K]"'),
-        ),
-    ),
 }
+
+NATIVE_TEMPLATE_TOML = '''[templates.native]
+layout = "main_left_grid_right"
+
+[[templates.native.panes]]
+role = "principal"
+command = "claudespace:principal"
+
+[[templates.native.panes]]
+role = "implementer"
+command = "claudespace:implementer"
+
+[[templates.native.panes]]
+role = "reviewer"
+command = "claudespace:reviewer"
+
+[[templates.native.panes]]
+role = "planner"
+command = "claudespace:planner"
+
+[[templates.native.panes]]
+role = "researcher"
+command = "claudespace:researcher"
+'''
 
 
 USER_TEMPLATES_PATH = Path.home() / ".config" / "claudespace" / "templates.toml"
@@ -128,6 +148,40 @@ def load_user_templates(path: Path = USER_TEMPLATES_PATH) -> dict[str, Template]
         templates[name] = Template(layout=layout, panes=panes)
 
     return templates
+
+
+def ensure_native_template_seeded(path: Path = USER_TEMPLATES_PATH) -> bool:
+    """Ensure ``templates.toml`` has ``native`` defined, as its first entry.
+
+    Called by ``sync_assets()`` on every install/update. Three cases:
+
+    - File missing: create it with just ``native``.
+    - File exists but has no ``[templates.native]`` table: prepend it, so
+      ``native`` sorts first when the file is read top-to-bottom.
+    - File already defines ``native``: leave it untouched, since the user
+      may have customized it.
+
+    Returns ``True`` if the file was created or modified.
+    """
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(NATIVE_TEMPLATE_TOML)
+        return True
+
+    existing = path.read_text()
+    try:
+        data = tomllib.loads(existing)
+    except tomllib.TOMLDecodeError:
+        # Leave malformed files alone - load_user_templates() will raise a
+        # clear error naming the problem when the user actually loads it.
+        return False
+
+    if "native" in data.get("templates", {}):
+        return False
+
+    separator = "\n" if existing.startswith("\n") or not existing else "\n\n"
+    path.write_text(NATIVE_TEMPLATE_TOML.rstrip("\n") + separator + existing)
+    return True
 
 
 def _all_templates() -> dict[str, Template]:

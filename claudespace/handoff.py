@@ -33,11 +33,18 @@ import json
 import logging
 import os
 import sys
+import time
 
 import iterm2
 
 from claudespace import iterm as iterm_ops
-from claudespace.pipeline import PIPELINE, blocked_marker_path, done_marker_path
+from claudespace.pipeline import (
+    DOWNSTREAM_ROLES,
+    PIPELINE,
+    blocked_marker_path,
+    done_marker_path,
+    parse_done_marker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +128,78 @@ def _print_nag_block(role: str, done_path: str) -> None:
     )
 
 
+async def _old_run_finished(
+    app: iterm2.App, *, root: str, run_started: float | None
+) -> bool:
+    """Whether the run that started at ``run_started`` already reached
+    reviewer PASS, i.e. it's safe to silently clear panes for a new topic.
+
+    ``reviewer.done`` is never marked ``.handed-off`` (reviewer is
+    terminal - see ``PIPELINE``), so its mere existence can't distinguish
+    "this run just finished" from "some run finished ages ago and nobody
+    cleaned up." Comparing its mtime against when the current run started
+    resolves that: a `reviewer.done` written after the run began means
+    *this* run reached PASS.
+    """
+    if run_started is None:
+        return True
+    done_path = done_marker_path(root, "reviewer")
+    if not os.path.isfile(done_path):
+        return False
+    return os.path.getmtime(done_path) >= run_started
+
+
+async def _handle_new_topic(
+    connection: iterm2.Connection, *, root: str, doc_artifact: str
+) -> str | None:
+    """Detect whether ``doc_artifact`` (a fresh researcher.done's contents)
+    starts a new topic in an already-used workspace, and if so, either
+    clear the downstream panes (old run finished) or return a warning to
+    prepend to the handoff prompt instead of clearing (old run still in
+    flight - never discard unfinished work silently).
+
+    Returns ``None`` if this continues the workspace's current run (no
+    action needed), or a warning string to prefix the handoff prompt with
+    if the old run was still in flight.
+    """
+    app = await iterm2.async_get_app(connection)
+    current_doc, run_started = await iterm_ops.get_run_doc(app, marker=root)
+
+    if current_doc is None or current_doc == doc_artifact:
+        await iterm_ops.set_run_doc(
+            app, marker=root, doc=doc_artifact, started_at=time.time()
+        )
+        return None
+
+    if await _old_run_finished(app, root=root, run_started=run_started):
+        logger.info(
+            "New topic '%s' replaces finished run '%s' - clearing downstream panes",
+            doc_artifact,
+            current_doc,
+        )
+        for downstream_role in DOWNSTREAM_ROLES:
+            session = await iterm_ops.find_role_session(
+                app, marker=root, role=downstream_role
+            )
+            if session is not None:
+                await iterm_ops.send_clear(session)
+        await iterm_ops.set_run_doc(
+            app, marker=root, doc=doc_artifact, started_at=time.time()
+        )
+        return None
+
+    logger.info(
+        "New topic '%s' starts while run '%s' is still in flight - warning instead of clearing",
+        doc_artifact,
+        current_doc,
+    )
+    return (
+        f"NOTE: the previous run on {current_doc} was still in progress in "
+        f"this pane. Continuing with {doc_artifact} now will discard that "
+        "context. "
+    )
+
+
 async def _send_handoff(
     connection: iterm2.Connection, *, root: str, role: str
 ) -> bool:
@@ -139,7 +218,9 @@ async def _send_handoff(
     done_path = done_marker_path(root, role)
 
     blocked_artifact = stage.bounce_to and _read_fresh_marker(blocked_path)
-    done_artifact = stage.next_role and _read_fresh_marker(done_path)
+    raw_done_content = stage.next_role and _read_fresh_marker(done_path)
+
+    new_topic_warning = None
 
     if blocked_artifact:
         destination_role, submit = stage.bounce_to, False
@@ -148,12 +229,23 @@ async def _send_handoff(
             f"/{destination_role} {role} sent this back - see "
             f"{blocked_artifact} "
         )
-    elif done_artifact:
-        destination_role = stage.next_role
+    elif raw_done_content:
+        destination_role, done_artifact = parse_done_marker(
+            raw_done_content, stage=stage
+        )
         marker_path = done_path
         app = await iterm2.async_get_app(connection)
         submit = await iterm_ops.get_auto_handoff(app, marker=root)
+
+        if role == "researcher":
+            new_topic_warning = await _handle_new_topic(
+                connection, root=root, doc_artifact=done_artifact
+            )
+            if new_topic_warning is not None:
+                submit = False
+
         prompt_text = (
+            f"{new_topic_warning or ''}"
             f"/{destination_role} read {done_artifact} from {role} and continue "
         )
     else:

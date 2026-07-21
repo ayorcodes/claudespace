@@ -30,19 +30,52 @@ class Stage:
     is terminal (reviewer - always surfaced to the user, never
     auto-advanced). ``bounce_to`` is who a ``.blocked`` marker routes back
     to, or ``None`` if this role has no bounce path.
+
+    ``alt_next_roles`` lists other roles this stage's ``.done`` marker is
+    allowed to route to instead of ``next_role``, when the marker's content
+    requests it (see ``parse_done_marker``). Empty for stages with only one
+    possible destination.
     """
 
     next_role: str | None
     bounce_to: str | None = None
+    alt_next_roles: tuple[str, ...] = ()
 
 
 PIPELINE: dict[str, Stage] = {
-    "researcher": Stage(next_role="planner"),
+    # A researcher investigating a well-scoped engineering change (bug fix,
+    # refactor, infra tweak) with no open product questions can route
+    # straight to principal - a Planning Brief would just restate facts the
+    # researcher already confirmed. See researcher.prompt.md's routing
+    # guidance and parse_done_marker's "route:" directive.
+    "researcher": Stage(next_role="planner", alt_next_roles=("principal",)),
     "planner": Stage(next_role="principal"),
     "principal": Stage(next_role="implementer", bounce_to="planner"),
     "implementer": Stage(next_role="reviewer"),
     "reviewer": Stage(next_role=None, bounce_to="implementer"),
 }
+
+
+def parse_done_marker(content: str, *, stage: Stage) -> tuple[str, str]:
+    """Split a ``.done`` marker's content into ``(destination_role, artifact_path)``.
+
+    The marker's content is normally just the artifact path, in which case
+    the destination is ``stage.next_role``. A stage that allows alternate
+    destinations (``stage.alt_next_roles``) may instead prefix the content
+    with a ``route: <role>\\n`` directive naming one of those roles; the
+    remaining line(s) are the artifact path as usual.
+
+    An unrecognized or disallowed ``route:`` value falls back to
+    ``stage.next_role`` rather than erroring, since a malformed directive
+    shouldn't stall the pipeline.
+    """
+    first_line, _, rest = content.partition("\n")
+    if first_line.startswith("route:"):
+        requested = first_line.removeprefix("route:").strip()
+        if requested in stage.alt_next_roles:
+            return requested, rest.strip()
+        return stage.next_role, rest.strip()
+    return stage.next_role, content.strip()
 
 
 def done_marker_path(root: str, role: str) -> str:
@@ -51,3 +84,10 @@ def done_marker_path(root: str, role: str) -> str:
 
 def blocked_marker_path(root: str, role: str) -> str:
     return f"{root.rstrip('/')}/{MARKER_DIR}/{role}.blocked"
+
+
+# Every role except researcher - these are the panes that accumulate
+# context from a run and need clearing when a fresh researcher.done starts
+# a new topic in an already-used workspace. See handoff.py's new-topic
+# detection.
+DOWNSTREAM_ROLES: tuple[str, ...] = ("planner", "principal", "implementer", "reviewer")
