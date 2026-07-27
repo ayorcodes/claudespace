@@ -54,6 +54,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "regardless of this setting.",
     )
     parser.add_argument(
+        "--lazy",
+        action="store_true",
+        help="Start with only the template's entry-role pane visible. Other "
+        "panes stay hidden (the window starts as a single unsplit pane) "
+        "until a pipeline handoff first reveals them, splitting them into "
+        "existence in their template-defined position.",
+    )
+    parser.add_argument(
         "--list-templates",
         action="store_true",
         help="List available template names and exit.",
@@ -71,9 +79,17 @@ async def _run(
     template: str,
     force_new: bool,
     auto_handoff: bool,
+    lazy: bool,
+    just_launched_iterm: bool,
 ) -> None:
     await workspace.open_workspace(
-        connection, root, template, force_new, auto_handoff=auto_handoff
+        connection,
+        root,
+        template,
+        force_new,
+        auto_handoff=auto_handoff,
+        lazy=lazy,
+        just_launched_iterm=just_launched_iterm,
     )
 
 
@@ -113,6 +129,8 @@ def main() -> None:
         template=args.template,
         force_new=args.new,
         auto_handoff=args.auto_handoff,
+        lazy=args.lazy,
+        just_launched_iterm=not iterm_was_running,
     )
     try:
         iterm2.run_until_complete(runner, retry=True)

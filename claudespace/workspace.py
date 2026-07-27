@@ -26,6 +26,8 @@ async def open_workspace(
     template_name: str,
     force_new: bool,
     auto_handoff: bool = False,
+    lazy: bool = False,
+    just_launched_iterm: bool = False,
 ) -> None:
     """Attach to or build a workspace for ``root`` using ``template_name``."""
     resolved_root = os.path.abspath(os.path.expanduser(root))
@@ -39,13 +41,26 @@ async def open_workspace(
             await iterm_ops.activate_window(existing)
             return
 
+    # iTerm2 opens its own default empty window on launch, before we ever
+    # get a connection - if we just cold-launched it (see cli.py), that
+    # window is stray chrome the user never asked for, not a workspace
+    # dedup target. Remember it now so build_workspace can close it once
+    # the real workspace window is up (never before - closing it first
+    # risks quitting iTerm2 entirely if it was the app's only window).
+    stray_windows = list(app.windows) if just_launched_iterm else []
+
     logger.info("Building workspace '%s' (template '%s')", resolved_root, template_name)
     os.makedirs(os.path.join(resolved_root, MARKER_DIR), exist_ok=True)
     window = await iterm_ops.build_workspace(
         connection,
         marker=resolved_root,
         root=resolved_root,
+        template_name=template_name,
         template=template,
         auto_handoff=auto_handoff,
+        lazy=lazy,
     )
     await iterm_ops.activate_window(window)
+
+    for stray in stray_windows:
+        await iterm_ops.close_window_if_empty(stray)

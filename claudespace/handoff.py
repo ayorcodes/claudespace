@@ -7,12 +7,10 @@ see ``roles.py`` and ``iterm.py``), checks for a fresh completion marker,
 and if one exists, prefills (and possibly submits) the destination pane's
 prompt with a reference to the real artifact path the marker names.
 
-Forward handoffs (a role finished successfully, ``<role>.done`` exists)
-auto-submit only if the workspace's auto-handoff toggle is on; otherwise
-they only prefill. Backward handoffs (a role bounced work back,
-``<role>.blocked`` exists) always prefill-only, regardless of the toggle -
-a rejection should never silently re-trigger work without a human looking
-at it first.
+Forward handoffs (a role finished successfully, ``<role>.done`` exists) and
+backward handoffs (a role bounced work back, ``<role>.blocked`` exists)
+both auto-submit only if the workspace's auto-handoff toggle is on;
+otherwise they only prefill.
 
 This module is a no-op (exits 0 silently) whenever it can't find enough
 context to act - missing env vars, no fresh marker, no destination pane -
@@ -38,6 +36,7 @@ import time
 import iterm2
 
 from claudespace import iterm as iterm_ops
+from claudespace.config import get_template
 from claudespace.pipeline import (
     DOWNSTREAM_ROLES,
     PIPELINE,
@@ -200,6 +199,45 @@ async def _handle_new_topic(
     )
 
 
+async def _reveal_destination(
+    app: iterm2.App, *, root: str, role: str, destination_role: str
+) -> "iterm2.Session | None":
+    """In a ``--lazy`` workspace, split ``destination_role``'s pane directly
+    off of ``role``'s own pane (the one handing off) and launch it - the
+    counterpart to the panes a non-lazy workspace already launched upfront
+    in ``build_workspace``.
+
+    Returns ``None`` (handled the same as "pane truly missing" by the
+    caller) if this workspace wasn't built with ``--lazy``, if its template
+    name can't be recovered, or if ``role``'s own pane is somehow gone too
+    (nothing to split off of) - all mean there's nowhere to reveal a pane,
+    e.g. an unrelated Claude Code session's Stop hook firing.
+    """
+    if not await iterm_ops.get_lazy(app, marker=root):
+        return None
+
+    template_name = await iterm_ops.get_template_name(app, marker=root)
+    if template_name is None:
+        return None
+
+    template = get_template(template_name)
+    if destination_role not in {pane.role for pane in template.panes}:
+        return None
+
+    source = await iterm_ops.find_role_session(app, marker=root, role=role)
+    if source is None:
+        return None
+
+    return await iterm_ops.reveal_role(
+        app,
+        marker=root,
+        root=root,
+        template=template,
+        role=destination_role,
+        source=source,
+    )
+
+
 async def _send_handoff(
     connection: iterm2.Connection, *, root: str, role: str
 ) -> bool:
@@ -221,10 +259,12 @@ async def _send_handoff(
     raw_done_content = stage.next_role and _read_fresh_marker(done_path)
 
     new_topic_warning = None
+    app = await iterm2.async_get_app(connection)
 
     if blocked_artifact:
-        destination_role, submit = stage.bounce_to, False
+        destination_role = stage.bounce_to
         marker_path = blocked_path
+        submit = await iterm_ops.get_auto_handoff(app, marker=root)
         prompt_text = (
             f"/{destination_role} {role} sent this back - see "
             f"{blocked_artifact} "
@@ -234,7 +274,6 @@ async def _send_handoff(
             raw_done_content, stage=stage
         )
         marker_path = done_path
-        app = await iterm2.async_get_app(connection)
         submit = await iterm_ops.get_auto_handoff(app, marker=root)
 
         if role == "researcher":
@@ -251,10 +290,13 @@ async def _send_handoff(
     else:
         return False
 
-    app = await iterm2.async_get_app(connection)
     destination = await iterm_ops.find_role_session(
         app, marker=root, role=destination_role
     )
+    if destination is None:
+        destination = await _reveal_destination(
+            app, root=root, role=role, destination_role=destination_role
+        )
     if destination is None:
         logger.warning(
             "No pane found for role '%s' in workspace '%s' - skipping handoff",

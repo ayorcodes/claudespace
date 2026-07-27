@@ -44,10 +44,25 @@ class PaneConfig:
 
 @dataclass(frozen=True, slots=True)
 class Template:
-    """A reusable workspace shape: a layout plus each role's command."""
+    """A reusable workspace shape: a layout plus each role's command.
+
+    ``entry_role`` is which role's pane is shown first in ``--lazy``
+    workspaces - the only pane visible until it hands off to another role
+    (see ``iterm.build_workspace``). Ignored outside ``--lazy`` mode, where
+    every pane in ``panes`` is launched immediately as today.
+    """
 
     layout: str
     panes: tuple[PaneConfig, ...]
+    entry_role: str = "researcher"
+
+    def __post_init__(self) -> None:
+        roles = {pane.role for pane in self.panes}
+        if self.entry_role not in roles:
+            raise ValueError(
+                f"Template's entry_role '{self.entry_role}' is not one of its "
+                f"panes' roles {sorted(roles)}"
+            )
 
 
 DEFAULT_TEMPLATE = "native"
@@ -105,11 +120,14 @@ def load_user_templates(path: Path = USER_TEMPLATES_PATH) -> dict[str, Template]
     """Load user-defined templates from a TOML file, if present.
 
     Expected format - one ``[templates.<name>]`` table per template, each
-    with a ``layout`` (must match a name registered in ``layouts.py``) and
-    a list of ``panes`` tables giving each pane's ``role`` and ``command``::
+    with a ``layout`` (must match a name registered in ``layouts.py``), a
+    list of ``panes`` tables giving each pane's ``role`` and ``command``,
+    and an optional ``entry_role`` (defaults to "researcher") naming which
+    pane is shown first in ``--lazy`` workspaces::
 
         [templates.my-template]
         layout = "main_left_grid_right"
+        entry_role = "researcher"
 
         [[templates.my-template.panes]]
         role = "principal"
@@ -139,13 +157,17 @@ def load_user_templates(path: Path = USER_TEMPLATES_PATH) -> dict[str, Template]
                 PaneConfig(role=pane["role"], command=pane["command"])
                 for pane in table["panes"]
             )
+            entry_role = table.get("entry_role", "researcher")
         except (KeyError, TypeError) as exc:
             raise ValueError(
                 f"Template '{name}' in '{path}' is missing a required field "
                 f"(each template needs 'layout' and 'panes', each pane "
                 f"needs 'role' and 'command'): {exc}"
             ) from exc
-        templates[name] = Template(layout=layout, panes=panes)
+        try:
+            templates[name] = Template(layout=layout, panes=panes, entry_role=entry_role)
+        except ValueError as exc:
+            raise ValueError(f"Template '{name}' in '{path}': {exc}") from exc
 
     return templates
 
