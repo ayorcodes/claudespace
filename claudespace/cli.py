@@ -12,6 +12,7 @@ import iterm2
 
 from claudespace import environment, update, utils, workspace
 from claudespace.config import DEFAULT_TEMPLATE, get_template, list_templates
+from claudespace.iterm import DEFAULT_MAX_ITEMS
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "existence in their template-defined position.",
     )
     parser.add_argument(
+        "--max-items",
+        type=int,
+        default=DEFAULT_MAX_ITEMS,
+        help="Circuit breaker for a conductor-driven multi-feature run "
+        f"(default: {DEFAULT_MAX_ITEMS}): the conductor pane stops and "
+        "reports after auto-advancing through this many backlog items, "
+        "regardless of backlog state. Ignored by templates without a "
+        "conductor pane (e.g. 'native').",
+    )
+    parser.add_argument(
         "--list-templates",
         action="store_true",
         help="List available template names and exit.",
@@ -80,6 +91,7 @@ async def _run(
     force_new: bool,
     auto_handoff: bool,
     lazy: bool,
+    max_items: int,
     just_launched_iterm: bool,
 ) -> None:
     await workspace.open_workspace(
@@ -89,6 +101,7 @@ async def _run(
         force_new,
         auto_handoff=auto_handoff,
         lazy=lazy,
+        max_items=max_items,
         just_launched_iterm=just_launched_iterm,
     )
 
@@ -130,6 +143,7 @@ def main() -> None:
         force_new=args.new,
         auto_handoff=args.auto_handoff,
         lazy=args.lazy,
+        max_items=args.max_items,
         just_launched_iterm=not iterm_was_running,
     )
     try:

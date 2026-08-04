@@ -26,7 +26,11 @@ import shutil
 from importlib import resources
 from pathlib import Path
 
-from claudespace.config import USER_TEMPLATES_PATH, ensure_native_template_seeded
+from claudespace.config import (
+    USER_TEMPLATES_PATH,
+    ensure_agentic_template_seeded,
+    ensure_native_template_seeded,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +95,7 @@ def sync_assets() -> None:
     prompts_copied = _copy_all(assets.joinpath("prompts"), PROMPTS_DEST)
     hook_installed = _install_handoff_hook()
     native_seeded = ensure_native_template_seeded()
+    agentic_seeded = ensure_agentic_template_seeded()
 
     logger.info(
         "Synced %d command(s) to %s, %d prompt(s) to %s",
@@ -103,6 +108,8 @@ def sync_assets() -> None:
         logger.info("Installed claudespace handoff Stop hook in %s", SETTINGS_DEST)
     if native_seeded:
         logger.info("Seeded 'native' template in %s", USER_TEMPLATES_PATH)
+    if agentic_seeded:
+        logger.info("Seeded 'agentic' template in %s", USER_TEMPLATES_PATH)
 
 
 def main() -> None:

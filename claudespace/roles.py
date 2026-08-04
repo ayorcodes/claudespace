@@ -25,7 +25,13 @@ def _exec_claude(model: str, effort: str) -> None:
     env.setdefault("CLAUDESPACE_ROOT", os.getcwd())
     os.execvpe(
         "claude",
-        ["claude", "--model", model, "--effort", effort, *sys.argv[1:]],
+        [
+            "claude",
+            "--model", model,
+            "--effort", effort,
+            "--permission-mode", "auto",
+            *sys.argv[1:],
+        ],
         env,
     )
 
@@ -48,3 +54,7 @@ def reviewer() -> None:
 
 def researcher() -> None:
     _exec_claude("claude-sonnet-5", "low")
+
+
+def conductor() -> None:
+    _exec_claude("claude-opus-4-8", "medium")

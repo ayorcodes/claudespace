@@ -27,6 +27,7 @@ async def open_workspace(
     force_new: bool,
     auto_handoff: bool = False,
     lazy: bool = False,
+    max_items: int = iterm_ops.DEFAULT_MAX_ITEMS,
     just_launched_iterm: bool = False,
 ) -> None:
     """Attach to or build a workspace for ``root`` using ``template_name``."""
@@ -59,6 +60,7 @@ async def open_workspace(
         template=template,
         auto_handoff=auto_handoff,
         lazy=lazy,
+        max_items=max_items,
     )
     await iterm_ops.activate_window(window)
 

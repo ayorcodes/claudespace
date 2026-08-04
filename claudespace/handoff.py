@@ -23,6 +23,14 @@ in a long implementation turn, since the instruction sits at the very end
 of the role's prompt), this module blocks the Stop and feeds a one-shot
 reminder back into the same session rather than letting the pipeline go
 silent. See ``_maybe_nag_missing_marker``.
+
+If the handoff mechanism itself raises (a transient iTerm2 API failure,
+say), that failure used to be swallowed - logged to stderr, which nothing
+surfaces to the user, so it read identically to "nothing needed handing
+off." It's now still visible whenever a marker genuinely looks missing: a
+filesystem-only fallback check (no iTerm2 calls, so it can't fail the same
+way) blocks the Stop and tells the role the handoff plumbing broke, instead
+of stopping clean. See ``_maybe_nag_after_handoff_error``.
 """
 
 from __future__ import annotations
@@ -41,7 +49,9 @@ from claudespace.pipeline import (
     DOWNSTREAM_ROLES,
     PIPELINE,
     blocked_marker_path,
+    conductor_run_marker_path,
     done_marker_path,
+    parse_blocked_marker,
     parse_done_marker,
 )
 
@@ -127,8 +137,82 @@ def _print_nag_block(role: str, done_path: str) -> None:
     )
 
 
+def _print_handoff_error_block(role: str, error: BaseException) -> None:
+    """Emit the Stop-hook JSON that blocks the stop after the handoff
+    mechanism itself failed (an exception during ``_run`` - see ``main``'s
+    exception handler), telling ``role`` about the failure explicitly
+    instead of letting the turn end silently.
+
+    The normal path (``_maybe_nag_missing_marker``) can only nag about a
+    missing marker when it actually gets to run; if an iTerm2 RPC call
+    somewhere in ``_send_handoff``/``_maybe_nag_missing_marker`` throws (a
+    transient API hiccup, a dropped connection, anything), the entire nag
+    check dies with it and used to just log to stderr - invisible to
+    everyone, since Stop-hook stderr isn't surfaced anywhere the user would
+    see it. From the model's and the user's point of view that read
+    identically to "nothing needed handing off," which is exactly the
+    silent-stop failure the nag mechanism exists to prevent in the first
+    place. This makes that failure visible via the same block-the-Stop
+    channel instead, so a turn doesn't end looking clean when the handoff
+    plumbing actually broke underneath it.
+    """
+    print(
+        json.dumps(
+            {
+                "decision": "block",
+                "reason": (
+                    f"The claudespace handoff mechanism for role '{role}' "
+                    f"raised an error while checking whether your work "
+                    f"needs to be handed off: {error!r}. This is a bug in "
+                    "claudespace's tooling, not something you did wrong - "
+                    "but it means the automatic handoff to the next role "
+                    "may not have happened. If you already created your "
+                    "completion marker (`.claudespace/<role>.done` or "
+                    "`.blocked`) per the Completion section of your "
+                    "instructions, you can likely ignore this and stop "
+                    "normally - just be aware the automatic handoff may "
+                    "need to be triggered manually this time. If you have "
+                    "not yet created that marker, create it now before "
+                    "stopping."
+                ),
+            }
+        )
+    )
+
+
+def _maybe_nag_after_handoff_error(root: str | None, role: str) -> bool:
+    """Filesystem-only, iTerm2-free fallback check run from ``main``'s
+    exception handler when ``_run`` (the normal handoff/nag path) itself
+    raised. Deliberately makes no iTerm2 API calls - the whole point is to
+    still say *something* useful even when the iTerm2 side is what's
+    broken, so this fallback can't fail the same way the thing it's
+    covering for just did.
+
+    Returns ``True`` (and prints a Stop-block) whenever ``role`` has a
+    forward pipeline stage and left no fresh ``.done``/``.blocked`` marker
+    at all - the same condition ``_maybe_nag_missing_marker`` checks, minus
+    the auto-handoff toggle (unreachable here without an iTerm2 call) and
+    minus the "already nagged" dedup (best-effort only; a repeated nag on
+    back-to-back hook failures is an acceptable cost next to silently
+    saying nothing). ``False`` if ``root`` is missing, the role is unknown,
+    or a marker already exists - nothing useful to report.
+    """
+    if root is None:
+        return False
+    stage = PIPELINE.get(role)
+    if stage is None or stage.next_role is None:
+        return False
+    done_path = done_marker_path(root, role)
+    blocked_path = blocked_marker_path(root, role)
+    if _read_fresh_marker(done_path) or (
+        stage.bounce_to and _read_fresh_marker(blocked_path)
+    ):
+        return False
+    return True
+
+
 async def _old_run_finished(
-    app: iterm2.App, *, root: str, run_started: float | None
+    app: iterm2.App, *, root: str, instance: str, run_started: float | None
 ) -> bool:
     """Whether the run that started at ``run_started`` already reached
     reviewer PASS, i.e. it's safe to silently clear panes for a new topic.
@@ -149,28 +233,32 @@ async def _old_run_finished(
 
 
 async def _handle_new_topic(
-    connection: iterm2.Connection, *, root: str, doc_artifact: str
+    connection: iterm2.Connection, *, root: str, instance: str, doc_artifact: str
 ) -> str | None:
-    """Detect whether ``doc_artifact`` (a fresh researcher.done's contents)
-    starts a new topic in an already-used workspace, and if so, either
-    clear the downstream panes (old run finished) or return a warning to
-    prepend to the handoff prompt instead of clearing (old run still in
-    flight - never discard unfinished work silently).
+    """Detect whether ``doc_artifact`` (a fresh researcher.done's contents,
+    or a fresh conductor.done's backlog-item description when conductor is
+    dispatching the next item) starts a new topic in an already-used
+    workspace, and if so, either clear the downstream panes (old run
+    finished) or return a warning to prepend to the handoff prompt instead
+    of clearing (old run still in flight - never discard unfinished work
+    silently).
 
     Returns ``None`` if this continues the workspace's current run (no
     action needed), or a warning string to prefix the handoff prompt with
     if the old run was still in flight.
     """
     app = await iterm2.async_get_app(connection)
-    current_doc, run_started = await iterm_ops.get_run_doc(app, marker=root)
+    current_doc, run_started = await iterm_ops.get_run_doc(
+        app, marker=root, instance=instance
+    )
 
     if current_doc is None or current_doc == doc_artifact:
         await iterm_ops.set_run_doc(
-            app, marker=root, doc=doc_artifact, started_at=time.time()
+            app, marker=root, instance=instance, doc=doc_artifact, started_at=time.time()
         )
         return None
 
-    if await _old_run_finished(app, root=root, run_started=run_started):
+    if await _old_run_finished(app, root=root, instance=instance, run_started=run_started):
         logger.info(
             "New topic '%s' replaces finished run '%s' - clearing downstream panes",
             doc_artifact,
@@ -178,12 +266,12 @@ async def _handle_new_topic(
         )
         for downstream_role in DOWNSTREAM_ROLES:
             session = await iterm_ops.find_role_session(
-                app, marker=root, role=downstream_role
+                app, marker=root, role=downstream_role, instance=instance
             )
             if session is not None:
                 await iterm_ops.send_clear(session)
         await iterm_ops.set_run_doc(
-            app, marker=root, doc=doc_artifact, started_at=time.time()
+            app, marker=root, instance=instance, doc=doc_artifact, started_at=time.time()
         )
         return None
 
@@ -200,7 +288,7 @@ async def _handle_new_topic(
 
 
 async def _reveal_destination(
-    app: iterm2.App, *, root: str, role: str, destination_role: str
+    app: iterm2.App, *, root: str, instance: str, role: str, destination_role: str
 ) -> "iterm2.Session | None":
     """In a ``--lazy`` workspace, split ``destination_role``'s pane directly
     off of ``role``'s own pane (the one handing off) and launch it - the
@@ -213,10 +301,10 @@ async def _reveal_destination(
     (nothing to split off of) - all mean there's nowhere to reveal a pane,
     e.g. an unrelated Claude Code session's Stop hook firing.
     """
-    if not await iterm_ops.get_lazy(app, marker=root):
+    if not await iterm_ops.get_lazy(app, marker=root, instance=instance):
         return None
 
-    template_name = await iterm_ops.get_template_name(app, marker=root)
+    template_name = await iterm_ops.get_template_name(app, marker=root, instance=instance)
     if template_name is None:
         return None
 
@@ -224,13 +312,16 @@ async def _reveal_destination(
     if destination_role not in {pane.role for pane in template.panes}:
         return None
 
-    source = await iterm_ops.find_role_session(app, marker=root, role=role)
+    source = await iterm_ops.find_role_session(
+        app, marker=root, role=role, instance=instance
+    )
     if source is None:
         return None
 
     return await iterm_ops.reveal_role(
         app,
         marker=root,
+        instance=instance,
         root=root,
         template=template,
         role=destination_role,
@@ -239,7 +330,7 @@ async def _reveal_destination(
 
 
 async def _send_handoff(
-    connection: iterm2.Connection, *, root: str, role: str
+    connection: iterm2.Connection, *, root: str, instance: str, role: str
 ) -> bool:
     """Send the next role's prompt if a fresh marker exists.
 
@@ -255,16 +346,27 @@ async def _send_handoff(
     blocked_path = blocked_marker_path(root, role)
     done_path = done_marker_path(root, role)
 
-    blocked_artifact = stage.bounce_to and _read_fresh_marker(blocked_path)
+    raw_blocked_content = stage.bounce_to and _read_fresh_marker(blocked_path)
     raw_done_content = stage.next_role and _read_fresh_marker(done_path)
 
     new_topic_warning = None
     app = await iterm2.async_get_app(connection)
 
-    if blocked_artifact:
-        destination_role = stage.bounce_to
+    if raw_blocked_content:
+        destination_role, blocked_artifact = parse_blocked_marker(
+            raw_blocked_content, stage=stage
+        )
+        if destination_role is None:
+            logger.warning(
+                "Role '%s' has multiple bounce targets %s but '%s' didn't "
+                "say which via 'route: <role>' - skipping handoff",
+                role,
+                stage.bounce_to,
+                blocked_path,
+            )
+            return False
         marker_path = blocked_path
-        submit = await iterm_ops.get_auto_handoff(app, marker=root)
+        submit = await iterm_ops.get_auto_handoff(app, marker=root, instance=instance)
         prompt_text = (
             f"/{destination_role} {role} sent this back - see "
             f"{blocked_artifact} "
@@ -274,13 +376,36 @@ async def _send_handoff(
             raw_done_content, stage=stage
         )
         marker_path = done_path
-        submit = await iterm_ops.get_auto_handoff(app, marker=root)
+        submit = await iterm_ops.get_auto_handoff(app, marker=root, instance=instance)
 
-        if role == "researcher":
+        if role in ("researcher", "conductor"):
+            # A fresh researcher.done from a human starting a new /researcher
+            # request, and a fresh conductor.done dispatching the next
+            # backlog item, are the same situation from downstream panes'
+            # point of view: a new topic is about to occupy
+            # planner/principal/implementer/reviewer, and their conversation
+            # state from whatever came before needs clearing so it doesn't
+            # bleed into the new one. Conductor only ever reaches this point
+            # right after the previous item's reviewer PASS (that's what
+            # invokes it - see conductor.prompt.md), so _old_run_finished's
+            # check is always true here in practice; it still runs the same
+            # check rather than skipping it, so this stays one code path
+            # instead of a conductor-specific unconditional-clear shortcut.
             new_topic_warning = await _handle_new_topic(
-                connection, root=root, doc_artifact=done_artifact
+                connection, root=root, instance=instance, doc_artifact=done_artifact
             )
             if new_topic_warning is not None:
+                # Collapsed to one line for the same reason parse_done_marker
+                # normalizes artifact paths (see pipeline.py's
+                # _normalize_artifact): whatever ends up in prompt_text gets
+                # typed verbatim into the destination pane, and a literal
+                # newline there is what makes Claude Code's TUI treat the
+                # injected text as a multi-line paste instead of a normal
+                # command line - which the submit-retry logic below doesn't
+                # recognize as "still unsubmitted." doc_artifact (a backlog
+                # item description, in the conductor case) could in
+                # principle contain one.
+                new_topic_warning = " ".join(new_topic_warning.split())
                 submit = False
 
         prompt_text = (
@@ -291,17 +416,19 @@ async def _send_handoff(
         return False
 
     destination = await iterm_ops.find_role_session(
-        app, marker=root, role=destination_role
+        app, marker=root, role=destination_role, instance=instance
     )
     if destination is None:
         destination = await _reveal_destination(
-            app, root=root, role=role, destination_role=destination_role
+            app, root=root, instance=instance, role=role, destination_role=destination_role
         )
     if destination is None:
         logger.warning(
-            "No pane found for role '%s' in workspace '%s' - skipping handoff",
+            "No pane found for role '%s' in workspace '%s' (instance '%s') - "
+            "skipping handoff",
             destination_role,
             root,
+            instance,
         )
         return False
 
@@ -318,20 +445,35 @@ async def _send_handoff(
 
 
 async def _maybe_nag_missing_marker(
-    connection: iterm2.Connection, *, root: str, role: str
+    connection: iterm2.Connection, *, root: str, instance: str, role: str
 ) -> bool:
     """If auto-handoff is on and ``role`` has a forward stage but left no
     fresh marker at all, print a Stop-blocking nag once and return ``True``.
 
     Only fires for roles that have somewhere to hand off to
-    (``stage.next_role``) - reviewer's terminal PASS case is correctly
-    exempt, since it has no forward marker to forget. Fires at most once
-    per missing-marker streak; ``_send_handoff`` clears the nag flag as soon
-    as a real marker shows up, so a role that's genuinely stuck (e.g.
-    waiting on the user) isn't nagged forever.
+    (``stage.next_role``) - reviewer's terminal PASS case is normally
+    exempt, since it has no forward marker to forget. That exemption itself
+    has an exception: under a conductor-driven run (``conductor-run``
+    marker present), reviewer's PASS *does* have somewhere to go - back to
+    conductor via ``route: conductor`` (see ``reviewer.prompt.md``'s "On
+    PASS" section) - and forgetting that marker would otherwise silently
+    stall the whole multi-feature run with no nag to catch it, since
+    reviewer's Stop hook would just see "nothing to do" and exit quietly.
+    So reviewer is nag-eligible whenever a conductor-run is active, even
+    though its ``Stage.next_role`` is ``None``.
+
+    Fires at most once per missing-marker streak; ``_send_handoff`` clears
+    the nag flag as soon as a real marker shows up, so a role that's
+    genuinely stuck (e.g. waiting on the user) isn't nagged forever.
     """
     stage = PIPELINE.get(role)
-    if stage is None or stage.next_role is None:
+    if stage is None:
+        return False
+
+    conductor_driven_reviewer = role == "reviewer" and os.path.isfile(
+        conductor_run_marker_path(root)
+    )
+    if stage.next_role is None and not conductor_driven_reviewer:
         return False
 
     done_path = done_marker_path(root, role)
@@ -346,7 +488,7 @@ async def _maybe_nag_missing_marker(
         return False
 
     app = await iterm2.async_get_app(connection)
-    if not await iterm_ops.get_auto_handoff(app, marker=root):
+    if not await iterm_ops.get_auto_handoff(app, marker=root, instance=instance):
         return False
 
     _mark_nagged(done_path)
@@ -354,10 +496,12 @@ async def _maybe_nag_missing_marker(
     return True
 
 
-async def _run(connection: iterm2.Connection, *, root: str, role: str) -> None:
-    handed_off = await _send_handoff(connection, root=root, role=role)
+async def _run(
+    connection: iterm2.Connection, *, root: str, instance: str, role: str
+) -> None:
+    handed_off = await _send_handoff(connection, root=root, instance=instance, role=role)
     if not handed_off:
-        await _maybe_nag_missing_marker(connection, root=root, role=role)
+        await _maybe_nag_missing_marker(connection, root=root, instance=instance, role=role)
 
 
 def main() -> None:
@@ -367,20 +511,35 @@ def main() -> None:
     or there's nothing fresh to hand off - see module docstring. If the
     role forgot its completion marker and auto-handoff is on, prints a
     Stop-blocking JSON reminder instead (see ``_maybe_nag_missing_marker``).
+
+    ``CLAUDESPACE_INSTANCE`` (the per-window UUID stamped by
+    ``build_workspace``/``reveal_role``) restricts every iTerm2 lookup this
+    run performs to panes in the *same physical window* - see
+    ``iterm.py``'s ``_matches_workspace``. Older panes launched before this
+    variable existed won't have it exported; falling back to ``None``
+    degrades to the old root-only matching for them rather than refusing to
+    hand off at all.
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     role = os.environ.get("CLAUDESPACE_ROLE")
     root = os.environ.get("CLAUDESPACE_ROOT")
+    instance = os.environ.get("CLAUDESPACE_INSTANCE")
     if not role or not root:
         return
 
     try:
         iterm2.run_until_complete(
-            lambda connection: _run(connection, root=root, role=role)
+            lambda connection: _run(connection, root=root, instance=instance, role=role)
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("Handoff failed for role '%s' in '%s'", role, root)
+        # Don't let a broken handoff mechanism read as "nothing to hand
+        # off" - that's indistinguishable from success to both the model
+        # and the user, since this stderr log isn't surfaced anywhere. See
+        # _maybe_nag_after_handoff_error and _print_handoff_error_block.
+        if _maybe_nag_after_handoff_error(root, role):
+            _print_handoff_error_block(role, exc)
         sys.exit(0)
 
 

@@ -324,16 +324,31 @@ Do not guess.
 
 # Completion
 
-## Routing: planner or principal?
+## Routing: planner, principal, or implementer?
 
-The Technical Brief normally hands off to the planner, who turns it into a Planning Brief before any architecture is designed. Skip planner and route straight to the principal instead, but only when **both** of these hold:
+The Technical Brief normally hands off to the planner, who turns it into a Planning Brief before any architecture is designed. There are two narrower fast paths past that default - skipping just principal, or skipping both planner and principal. Evaluate the stricter one (straight to implementer) first; only fall back to the principal-only skip if it doesn't qualify.
+
+### Skip straight to implementer
+
+Route directly to implementer, skipping both planner and principal, only when **all** of these hold:
+
+- The change is trivial - a small, mechanical bug fix, typo, config tweak, or one-line logic correction, not a refactor, dependency bump, or anything touching more than a small, contiguous surface.
+- The fix is already obvious from the investigation itself. There is exactly one reasonable way to make the change; no architectural decision, tradeoff, or choice between alternatives exists for principal to actually make. If you find yourself weighing more than one approach, that is principal's job - do not skip it.
+- The blast radius is small and well-understood: no schema/migration, no new contracts or APIs, no cross-service or cross-module ripple, nothing a reviewer would need an implementation design to sanity-check against.
+- There is no genuine open product question (same bar as the principal skip below).
+
+An implementation design for a change like this would just restate the one obvious fix in more words - it resolves nothing. When genuinely unsure, do not use this path; fall through to the principal skip or the planner default instead. Implementer can still bounce back up to principal on its own if it starts implementing and discovers the change is bigger than it looked, so this path is not a one-way door.
+
+### Skip planner, keep principal
+
+If the implementer skip doesn't qualify, skip planner and route straight to the principal instead, but only when **both** of these hold:
 
 - The request is a well-scoped engineering change - a bug fix, refactor, dependency bump, config/infra change, or similar - not a new user-facing feature.
 - There is no genuine open product question. Scope, user behaviour, and acceptance criteria are already unambiguous from the request itself; a Planning Brief would just restate facts you already confirmed during investigation, not resolve anything.
 
 Only unknowns you labelled `[product]` count against the second condition. An unknown labelled `[engineering - unresolved]` is not a product question and does not by itself force a planner handoff - the planner cannot resolve it either, since the planner never inspects code. If you find yourself routing to planner solely because of engineering unknowns, stop and go verify them in the repository instead (subject to the "minimum necessary" principle); do not use unresolved engineering questions as a reason to hand off to planner.
 
-If either condition fails - the request changes user-facing behaviour, or scope/intent is still ambiguous on a product/UX axis - hand off to planner as usual. When genuinely unsure whether something is a product question, prefer planner; routing to principal is the exception, not the default.
+If none of the above apply - the request changes user-facing behaviour, or scope/intent is still ambiguous on a product/UX axis - hand off to planner as usual. When genuinely unsure whether something is a product question, prefer planner; routing to principal or implementer is the exception, not the default.
 
 When complete:
 
@@ -350,12 +365,20 @@ When complete:
      ```
 
      This hands the brief off to the principal pane directly.
+   - If you determined this run qualifies for the trivial fast path, instead write `route: implementer` followed by the artifact path, e.g.:
+
+     ```
+     route: implementer
+     docs/research/2026-07-18-fix-off-by-one.md
+     ```
+
+     This hands the brief off to the implementer pane directly. Implementer will treat the Technical Brief itself as the source of truth for what to build, since there is no Planning Brief or implementation design in this path.
 
 3. Report:
 
 - Investigation completed
 - Technical Brief location
-- Whether this hands off to planner or directly to principal, and why
+- Whether this hands off to planner, directly to principal, or directly to implementer, and why
 - Files inspected
 - Outstanding unknowns
 

@@ -86,6 +86,26 @@ TEMPLATES: dict[str, Template] = {
             PaneConfig(role="researcher", command="claudespace:researcher"),
         ),
     ),
+    # Opt-in template for unattended multi-feature runs: adds a conductor
+    # pane on top of the same five pipeline roles native uses. Not merged
+    # into native - a project that just wants the single-feature pipeline
+    # shouldn't get a 6th pane it never uses. See conductor.prompt.md and
+    # pipeline.py's reviewer -> conductor alt_next_roles for how the
+    # backlog-driven outer loop works. entry_role is conductor, not the
+    # Template default of researcher, since conductor is where a run
+    # starts (backlog generation) in this template.
+    "agentic": Template(
+        layout="conductor_main_left_grid_right",
+        entry_role="conductor",
+        panes=(
+            PaneConfig(role="conductor", command="claudespace:conductor"),
+            PaneConfig(role="principal", command="claudespace:principal"),
+            PaneConfig(role="implementer", command="claudespace:implementer"),
+            PaneConfig(role="reviewer", command="claudespace:reviewer"),
+            PaneConfig(role="planner", command="claudespace:planner"),
+            PaneConfig(role="researcher", command="claudespace:researcher"),
+        ),
+    ),
 }
 
 NATIVE_TEMPLATE_TOML = '''[templates.native]
@@ -108,6 +128,35 @@ role = "planner"
 command = "claudespace:planner"
 
 [[templates.native.panes]]
+role = "researcher"
+command = "claudespace:researcher"
+'''
+
+AGENTIC_TEMPLATE_TOML = '''[templates.agentic]
+layout = "conductor_main_left_grid_right"
+entry_role = "conductor"
+
+[[templates.agentic.panes]]
+role = "conductor"
+command = "claudespace:conductor"
+
+[[templates.agentic.panes]]
+role = "principal"
+command = "claudespace:principal"
+
+[[templates.agentic.panes]]
+role = "implementer"
+command = "claudespace:implementer"
+
+[[templates.agentic.panes]]
+role = "reviewer"
+command = "claudespace:reviewer"
+
+[[templates.agentic.panes]]
+role = "planner"
+command = "claudespace:planner"
+
+[[templates.agentic.panes]]
 role = "researcher"
 command = "claudespace:researcher"
 '''
@@ -203,6 +252,45 @@ def ensure_native_template_seeded(path: Path = USER_TEMPLATES_PATH) -> bool:
 
     separator = "\n" if existing.startswith("\n") or not existing else "\n\n"
     path.write_text(NATIVE_TEMPLATE_TOML.rstrip("\n") + separator + existing)
+    return True
+
+
+def ensure_agentic_template_seeded(path: Path = USER_TEMPLATES_PATH) -> bool:
+    """Ensure ``templates.toml`` has ``agentic`` defined.
+
+    Mirrors ``ensure_native_template_seeded`` but kept as a separate
+    function/entry rather than folded into it - ``agentic`` is opt-in (a
+    project must still pass ``--template agentic`` to use it; seeding it
+    only makes it discoverable via ``--list-templates`` and usable without
+    the user hand-writing its TOML themselves), and keeping the two seed
+    paths independent means a future built-in template doesn't require
+    touching every existing seeding function.
+
+    Same three cases as the native seeder: create the file with just
+    ``agentic`` if missing, append the ``[templates.agentic]`` table if the
+    file exists but lacks one (after any content already there, so it
+    doesn't fight ``ensure_native_template_seeded`` for the "first entry"
+    position), or leave it untouched if the user already defined
+    ``agentic`` themselves.
+
+    Returns ``True`` if the file was created or modified.
+    """
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(AGENTIC_TEMPLATE_TOML)
+        return True
+
+    existing = path.read_text()
+    try:
+        data = tomllib.loads(existing)
+    except tomllib.TOMLDecodeError:
+        return False
+
+    if "agentic" in data.get("templates", {}):
+        return False
+
+    separator = "\n" if existing.startswith("\n") or not existing else "\n\n"
+    path.write_text(existing.rstrip("\n") + separator + AGENTIC_TEMPLATE_TOML.lstrip("\n"))
     return True
 
 

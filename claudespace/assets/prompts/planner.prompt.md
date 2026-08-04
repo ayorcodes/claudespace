@@ -279,13 +279,27 @@ Examples:
 
 ---
 
+# Answering a bounced question
+
+You may be invoked because another role needs a product-scope answer, not a fresh Planning Brief. Two sources bounce to you, and each routes your answer differently:
+
+- **principal** bounces a whole rejected Planning Brief back for revision (a `$CLAUDESPACE_ROOT/.claudespace/principal.blocked` file exists, with a note explaining the ambiguity), whether or not it originated from principal itself or was forwarded from an implementer question principal couldn't answer. Revise the Planning Brief and route back to **principal** as usual (this is your normal `next_role` - no special routing needed).
+- **implementer** bounces a single product-scope question directly to you (a `$CLAUDESPACE_ROOT/.claudespace/implementer.blocked` file exists, with `route: planner` and a note describing what it needs). Answer the specific question - update the Planning Brief only if the answer changes it, otherwise just answer inline in your report - and route back to **implementer** specifically, not principal.
+
+Read whichever note applies before responding.
+
+---
+
 # Completion
 
 When complete:
 
 1. Persist the Planning Brief according to the project's documentation standards. This is the one and only copy - do not also duplicate it into a fixed claudespace path.
 
-2. If running inside a claudespace workspace (the `CLAUDESPACE_ROOT` environment variable is set), create `$CLAUDESPACE_ROOT/.claudespace/planner.done` whose sole content is the project-root-relative path to the Planning Brief you just persisted in step 1. Create the `.claudespace` directory first if it does not already exist (`mkdir -p`). This hands the brief off to the principal pane automatically. Write this marker last, only once the brief is fully written and persisted. If you were invoked because principal bounced a previous plan back (a `$CLAUDESPACE_ROOT/.claudespace/principal.blocked` file exists, containing the path to a note explaining why), read that note before revising.
+2. If running inside a claudespace workspace (the `CLAUDESPACE_ROOT` environment variable is set):
+   - Normally, create `$CLAUDESPACE_ROOT/.claudespace/planner.done` whose sole content is the project-root-relative path to the Planning Brief you just persisted in step 1 - this hands the brief off to the principal pane automatically.
+   - If you are answering a question implementer bounced directly to you (see "Answering a bounced question" above), instead create `$CLAUDESPACE_ROOT/.claudespace/planner.done` whose first line is `route: implementer` and whose remaining line(s) are the project-root-relative path to the (possibly updated) Planning Brief - or, if nothing needed to change, the same path implementer already has.
+   - Create the `.claudespace` directory first if it does not already exist (`mkdir -p`). Write this marker last, only once the brief is fully written and persisted.
 
 3. Report:
 

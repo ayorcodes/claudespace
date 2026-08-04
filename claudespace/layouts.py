@@ -112,8 +112,45 @@ _MAIN_LEFT_GRID_RIGHT = SplitNode(
 )
 
 
+# ┌───────────┬────────────┬──────────────┬──────────────┐
+# │           │            │ implementer  │ planner      │
+# │ conductor │  principal ├──────────────┼──────────────┤
+# │           │            │ reviewer     │ researcher   │
+# └───────────┴────────────┴──────────────┴──────────────┘
+#
+# Used by the "agentic" template (see config.py) - the same 2x2
+# implementer/reviewer/planner/researcher grid as _MAIN_LEFT_GRID_RIGHT,
+# with conductor added as a second standalone leftmost column (alongside
+# principal) rather than folded into the grid, since conductor's job -
+# backlog bookkeeping and dispatch - is categorically different from the
+# other five roles' pipeline work and deserves the same visual prominence
+# principal already gets as a standalone pane.
+_CONDUCTOR_MAIN_LEFT_GRID_RIGHT = SplitNode(
+    vertical=True,
+    first=SplitNode(role="conductor"),
+    second=SplitNode(
+        vertical=True,
+        first=SplitNode(role="principal"),
+        second=SplitNode(
+            vertical=True,
+            first=SplitNode(
+                vertical=False,
+                first=SplitNode(role="implementer"),
+                second=SplitNode(role="reviewer"),
+            ),
+            second=SplitNode(
+                vertical=False,
+                first=SplitNode(role="planner"),
+                second=SplitNode(role="researcher"),
+            ),
+        ),
+    ),
+)
+
+
 LAYOUTS: dict[str, Layout] = {
     "main_left_grid_right": Layout(tree=_MAIN_LEFT_GRID_RIGHT),
+    "conductor_main_left_grid_right": Layout(tree=_CONDUCTOR_MAIN_LEFT_GRID_RIGHT),
 }
 
 
