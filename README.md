@@ -13,6 +13,149 @@ attaches to the existing window instead of creating a duplicate.
 └────────────┴──────────────┴──────────────┘
 ```
 
+claudespace isn't just a window layout - it's a five-role software delivery
+pipeline (researcher → planner → principal → implementer → reviewer), each
+role running as its own Claude Code session with its own model, its own
+system prompt, and a narrow mandate it isn't allowed to step outside of. The
+roles hand work to each other automatically, on disk, through small marker
+files a Stop hook watches for - no copy-pasting context between panes.
+
+## Table of contents
+
+- [How it works](#how-it-works)
+- [Where do I start?](#where-do-i-start)
+- [Platform support](#platform-support)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+- [Pipeline handoff](#pipeline-handoff)
+- [Unattended multi-feature runs (`agentic` template)](#unattended-multi-feature-runs-agentic-template)
+- [Adding your own template](#adding-your-own-template)
+
+## How it works
+
+Every role is a Claude Code session running one of the prompts in
+`claudespace/assets/prompts/`, invoked via its matching slash command
+(`/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`,
+`/conductor`). Each role reads only the artifacts it needs, produces exactly
+one artifact of its own, and stops - it never reaches forward or backward
+into another role's job.
+
+| role | question it answers | reads | produces | never does |
+|---|---|---|---|---|
+| **researcher** | How does this work *today*? | the request, existing docs | Technical Brief (facts, execution flow, files, unknowns) | design, implement, review, speculate |
+| **planner** | What should we build, from a product standpoint? | the request, product notes | Planning Brief (scope, requirements, acceptance criteria) | read code, design architecture |
+| **principal** | How should we build it? | Planning Brief + Technical Brief | Implementation Design (architecture, data flow, migrations, implementation order) | redefine requirements, write code |
+| **implementer** | Build it. | Implementation Design | working code, tests, an implementation report | redesign, add unrelated scope |
+| **reviewer** | Is it actually done and correct? | Implementation Design + the diff | a review with a PASS / CHANGES REQUIRED verdict | fix issues itself, invent new requirements |
+
+Each artifact is a real file, persisted to wherever your project's own
+documentation conventions say it should live (`docs/research/`,
+`docs/design/`, or whatever `CLAUDE.md` specifies) - `claudespace` never
+invents a parallel copy. The only thing living under `.claudespace/` is
+small routing state: `<role>.done` / `<role>.blocked` marker files whose
+*content* is the path to the real artifact.
+
+### How the roles talk to each other
+
+The default path is linear, but it isn't the only path - a role that hits a
+blocker mid-stage doesn't have to wait for the whole pipeline to finish and
+loop back around:
+
+```
+                    ┌──────────┐
+        ┌──────────▶│ planner  │◀───────────────────┐
+        │           └────┬─────┘                    │
+        │                │ Planning Brief            │ product-scope question,
+        │                ▼                           │ forwarded from implementer
+        │           ┌──────────┐   rejects a    ┌─────┴──────┐
+  Technical          │ principal│──vague Plan───▶│ bounce to  │
+  Brief              └────┬─────┘   Brief        │  planner   │
+        │                │ Implementation          └────────────┘
+        │                │ Design                        ▲
+┌──────────┐        ┌────────────┐   design/arch          │
+│researcher│───────▶│ implementer│───question─────────────┘
+└──────────┘        └─────┬──────┘   (bounce to principal)
+   │   ▲                  │ code + report
+   │   │ trivial fix,      ▼
+   │   │ no design    ┌──────────┐   CHANGES REQUIRED
+   │   └──────────────│ reviewer │──▶(bounce to implementer)
+   │   skip straight  └────┬─────┘
+   │   to implementer      │ PASS
+   │                       ▼
+   │                  you (terminal) — or, under `conductor`,
+   │                  back to conductor for the next backlog item
+   └── skip planner: researcher → principal directly
+       (well-scoped engineering change, no open product question)
+```
+
+- **Forward, on success** — researcher → planner → principal → implementer
+  → reviewer. Reviewer's PASS is terminal by default: it surfaces to you
+  and nothing auto-advances, so a run never quietly keeps going past your
+  blind spot.
+- **Fast paths past the default** — researcher can route straight to
+  **principal** (skipping the Planning Brief) when a change is a
+  well-scoped engineering task with no open product question, or straight
+  to **implementer** (skipping both Planning Brief and Implementation
+  Design) when the fix is trivial and there's exactly one reasonable way to
+  make it. Implementer can still escalate back to principal on its own if a
+  "trivial" fix turns out to need real design work once it starts digging.
+- **Rejections** — principal can bounce a whole Planning Brief back to
+  planner if it's too ambiguous to design against; reviewer can bounce a
+  whole implementation back to implementer on `CHANGES REQUIRED`. Both
+  redo the artifact from scratch, not just patch it.
+- **Questions, not rejections** — implementer, stuck on something only an
+  upstream role can resolve, can ask a single targeted question without its
+  own work being thrown out: **principal** for a design/architecture
+  question, **planner** for a product-scope question. Principal can also
+  forward a question on to planner if it turns out to be product-scoped
+  rather than architectural. Whoever answers routes back to *whoever
+  asked* - not forward along the fixed pipeline - so an answered question
+  resumes exactly where it was asked.
+- **Conductor** (optional sixth role, see below) sits outside this chain
+  entirely - it only decomposes a goal into a backlog and dispatches one
+  item at a time into the same researcher-first pipeline, picking up the
+  next item automatically on every reviewer PASS.
+
+All of this routing is driven by a single Stop hook
+(`claudespace:handoff`) reading `pipeline.py`'s map of "who talks to whom" -
+see [Pipeline handoff](#pipeline-handoff) for the mechanics.
+
+## Where do I start?
+
+**Start at `/researcher`, always** - even for a change you think is
+trivial. Researcher is the one role allowed to read the repository before
+anything else happens, and its job includes deciding how far the request
+needs to travel through the rest of the pipeline:
+
+```
+claudespace                      # open the workspace (see Usage below)
+```
+
+Then, in the **researcher** pane:
+
+```
+/researcher add rate limiting to the /api/upload endpoint
+```
+
+From there:
+
+- If it's a genuine product-facing feature with open scope questions,
+  researcher hands off to **planner** - work through the pipeline pane by
+  pane (or turn on `--auto-handoff`, see below, and mostly watch).
+- If it's a well-scoped engineering change with no product ambiguity
+  (a refactor, a dependency bump, an infra tweak), researcher skips
+  straight to **principal**.
+- If it's genuinely trivial (a typo, an off-by-one, a one-line config
+  fix), researcher skips straight to **implementer**.
+
+You never need to manually decide which pane to open first for a new
+feature - open `/researcher` and let its routing decision carry you to the
+right place. The only pane you invoke directly for a *new* request is
+researcher (or `/conductor`, for a whole backlog of them - see
+[Unattended multi-feature runs](#unattended-multi-feature-runs-agentic-template)).
+Every other pane gets its work handed to it automatically.
+
 ## Platform support
 
 **macOS only.** claudespace drives iTerm2's official Python API, which has
