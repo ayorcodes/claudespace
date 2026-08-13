@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 
 
 def setup_logging(verbose: bool) -> None:
@@ -30,12 +31,25 @@ def is_iterm_running() -> bool:
     return result.returncode == 0
 
 
-def launch_iterm() -> None:
-    """Launch iTerm2.app if it is not already running.
+def launch_iterm(*, timeout: float = 10.0) -> None:
+    """Launch iTerm2.app if it is not already running, and wait for it.
 
     The iTerm2 Python API can only connect to an already-running instance -
-    it has no facility to start the app itself. ``open -a iTerm`` is the
-    standard macOS mechanism for launching an app by name and is not UI
-    automation.
+    it has no facility to start the app itself. ``open -b`` launches by
+    bundle ID, which is immune to the app's display name/path and avoids
+    LaunchServices lookup-by-name races right after install.
+
+    ``open`` returns as soon as the launch request is handed off, not once
+    the app is actually up - immediately proceeding to connect to the
+    Python API races the app's startup, especially right after a fresh
+    install. Poll ``pgrep`` until the process appears (or ``timeout``
+    elapses) so callers can rely on ``is_iterm_running()`` being true
+    afterwards instead of silently racing it.
     """
-    subprocess.run(["open", "-a", "iTerm"], check=True)
+    subprocess.run(["open", "-b", "com.googlecode.iterm2"], check=True)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if is_iterm_running():
+            return
+        time.sleep(0.2)

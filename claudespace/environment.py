@@ -122,4 +122,11 @@ def ensure_environment(*, iterm_was_running: bool) -> None:
                 "restart to take effect. Quit and reopen iTerm2, then "
                 "re-run claudespace."
             )
-            sys.exit(1)
+        else:
+            logger.error(
+                "iTerm2's Python API was just enabled, but a freshly "
+                "installed/never-launched iTerm2 isn't guaranteed to pick "
+                "up a preference written moments before its first launch. "
+                "Re-run claudespace."
+            )
+        sys.exit(1)
