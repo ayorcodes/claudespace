@@ -59,7 +59,7 @@ def run_update() -> None:
 
 
 def main() -> None:
-    """Entrypoint installed as the ``claudespace:update`` console script."""
+    """Entrypoint installed as the ``claudespace-update`` console script."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     run_update()
 

@@ -1,6 +1,6 @@
 """Claude role wrappers, each pinned to a model and effort level.
 
-These are installed as console-scripts (``claudespace:principal`` etc.) so
+These are installed as console-scripts (``claudespace-principal`` etc.) so
 workspace templates work right after ``pip install`` with no shell config
 required.
 """

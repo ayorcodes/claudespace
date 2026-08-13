@@ -118,7 +118,7 @@ loop back around:
   next item automatically on every reviewer PASS.
 
 All of this routing is driven by a single Stop hook
-(`claudespace:handoff`) reading `pipeline.py`'s map of "who talks to whom" -
+(`claudespace-handoff`) reading `pipeline.py`'s map of "who talks to whom" -
 see [Pipeline handoff](#pipeline-handoff) for the mechanics.
 
 ## Where do I start?
@@ -182,9 +182,9 @@ curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.
 
 This installs [pipx](https://pipx.pypa.io) (via Homebrew) if you don't have
 it, then installs claudespace through it in an isolated environment, along
-with five small console-scripts (`claudespace:principal`,
-`claudespace:implementer`, `claudespace:reviewer`, `claudespace:planner`,
-`claudespace:researcher`) that each just launch `claude` pinned to a model
+with five small console-scripts (`claudespace-principal`,
+`claudespace-implementer`, `claudespace-reviewer`, `claudespace-planner`,
+`claudespace-researcher`) that each just launch `claude` pinned to a model
 and effort level - no shell config required.
 
 | role        | model           | effort |
@@ -207,7 +207,7 @@ the sync after an upgrade picks up fixes - any local edits to a prompt or
 command will be lost. Re-run the sync manually with:
 
 ```
-claudespace:sync-assets
+claudespace-sync-assets
 ```
 
 ### Updating
@@ -247,7 +247,7 @@ claudespace --template agentic --auto-handoff   # unattended multi-feature run, 
 
 Each role's prompt writes its output to `.claudespace/<artifact>.md` in the
 workspace root and, on completion, a `.done` marker. A globally-installed
-Stop hook (`claudespace:handoff`, wired into `~/.claude/settings.json` by
+Stop hook (`claudespace-handoff`, wired into `~/.claude/settings.json` by
 `sync-assets`) watches for fresh markers and sends the next role's prompt
 into its pane: researcher → planner → principal → implementer → reviewer.
 
@@ -372,11 +372,11 @@ command = "claude2 --model claude-opus-4-8 --effort medium"
 
 [[templates.max.panes]]
 role = "implementer"
-command = "claudespace:implementer"
+command = "claudespace-implementer"
 
 [[templates.max.panes]]
 role = "reviewer"
-command = "claudespace:reviewer"
+command = "claudespace-reviewer"
 
 [[templates.max.panes]]
 role = "planner"
@@ -384,13 +384,13 @@ command = "claude2 --model claude-opus-4-8 --effort medium"
 
 [[templates.max.panes]]
 role = "researcher"
-command = "claudespace:researcher"
+command = "claudespace-researcher"
 ```
 
 Each pane's `role` must match one of the roles the chosen layout produces
 (`main_left_grid_right` needs exactly `principal`, `implementer`,
 `reviewer`, `planner`, `researcher`). `command` is any shell command the
-pane runs on open - a `claudespace:` console-script, `claude` with your own
+pane runs on open - a `claudespace-` console-script, `claude` with your own
 flags, or something else entirely.
 
 Run it with `claudespace --template max`; see all available templates

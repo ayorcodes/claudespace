@@ -505,7 +505,7 @@ async def _run(
 
 
 def main() -> None:
-    """Entrypoint installed as the ``claudespace:handoff`` console script.
+    """Entrypoint installed as the ``claudespace-handoff`` console script.
 
     Silently exits (code 0) if this isn't running inside a claudespace pane
     or there's nothing fresh to hand off - see module docstring. If the

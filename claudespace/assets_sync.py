@@ -11,7 +11,7 @@ files are always overwritten with the bundled version, so re-running this
 after an upgrade picks up fixes - any local edits to a prompt or command are
 not preserved.
 
-Also registers a global ``Stop`` hook that calls ``claudespace:handoff``
+Also registers a global ``Stop`` hook that calls ``claudespace-handoff``
 after every turn. The hook itself is a fast no-op outside claudespace panes
 (``handoff.py`` bails out immediately if ``CLAUDESPACE_ROLE`` isn't set), so
 it's safe to install once for every Claude Code session on the machine
@@ -38,7 +38,7 @@ COMMANDS_DEST = Path.home() / ".claude" / "commands"
 PROMPTS_DEST = Path.home() / ".ai" / "prompts"
 SETTINGS_DEST = Path.home() / ".claude" / "settings.json"
 
-HANDOFF_HOOK_COMMAND = "claudespace:handoff"
+HANDOFF_HOOK_COMMAND = "claudespace-handoff"
 
 
 def _copy_all(src_dir: resources.abc.Traversable, dest_dir: Path) -> int:

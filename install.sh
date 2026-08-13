@@ -45,14 +45,18 @@ if ! command -v pipx >/dev/null 2>&1; then
     fi
     echo "Installing pipx via Homebrew..."
     brew install pipx
-    pipx ensurepath
 fi
+
+# Always run this, not just after a fresh pipx install: a pre-existing pipx
+# may never have had `ensurepath` run, which is exactly what leaves
+# PIPX_BIN_DIR off PATH even though this script's own install succeeds.
+pipx ensurepath
 
 echo "Installing claudespace from $SCRIPT_DIR..."
 pipx install --force "$SCRIPT_DIR"
 
 echo "Registering bundled commands and prompts..."
-"$(pipx environment --value PIPX_BIN_DIR)/claudespace:sync-assets"
+"$(pipx environment --value PIPX_BIN_DIR)/claudespace-sync-assets"
 
 echo "Done. Run 'claudespace' from any project folder to open a workspace."
 echo "(If 'claudespace' isn't found, open a new shell so pipx's PATH changes take effect.)"

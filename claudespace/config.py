@@ -72,18 +72,18 @@ DEFAULT_TEMPLATE = "native"
 # authoritative copy of "native" lives in ``templates.toml`` once
 # ``ensure_native_template_seeded`` has run (see below).
 TEMPLATES: dict[str, Template] = {
-    # claudespace:principal/claudespace:implementer/claudespace:reviewer/
-    # claudespace:planner/claudespace:researcher are console-scripts
+    # claudespace-principal/claudespace-implementer/claudespace-reviewer/
+    # claudespace-planner/claudespace-researcher are console-scripts
     # installed by this package (see roles.py), each pinned to its own
     # model and effort level.
     "native": Template(
         layout="main_left_grid_right",
         panes=(
-            PaneConfig(role="principal", command="claudespace:principal"),
-            PaneConfig(role="implementer", command="claudespace:implementer"),
-            PaneConfig(role="reviewer", command="claudespace:reviewer"),
-            PaneConfig(role="planner", command="claudespace:planner"),
-            PaneConfig(role="researcher", command="claudespace:researcher"),
+            PaneConfig(role="principal", command="claudespace-principal"),
+            PaneConfig(role="implementer", command="claudespace-implementer"),
+            PaneConfig(role="reviewer", command="claudespace-reviewer"),
+            PaneConfig(role="planner", command="claudespace-planner"),
+            PaneConfig(role="researcher", command="claudespace-researcher"),
         ),
     ),
     # Opt-in template for unattended multi-feature runs: adds a conductor
@@ -98,12 +98,12 @@ TEMPLATES: dict[str, Template] = {
         layout="conductor_main_left_grid_right",
         entry_role="conductor",
         panes=(
-            PaneConfig(role="conductor", command="claudespace:conductor"),
-            PaneConfig(role="principal", command="claudespace:principal"),
-            PaneConfig(role="implementer", command="claudespace:implementer"),
-            PaneConfig(role="reviewer", command="claudespace:reviewer"),
-            PaneConfig(role="planner", command="claudespace:planner"),
-            PaneConfig(role="researcher", command="claudespace:researcher"),
+            PaneConfig(role="conductor", command="claudespace-conductor"),
+            PaneConfig(role="principal", command="claudespace-principal"),
+            PaneConfig(role="implementer", command="claudespace-implementer"),
+            PaneConfig(role="reviewer", command="claudespace-reviewer"),
+            PaneConfig(role="planner", command="claudespace-planner"),
+            PaneConfig(role="researcher", command="claudespace-researcher"),
         ),
     ),
 }
@@ -113,23 +113,23 @@ layout = "main_left_grid_right"
 
 [[templates.native.panes]]
 role = "principal"
-command = "claudespace:principal"
+command = "claudespace-principal"
 
 [[templates.native.panes]]
 role = "implementer"
-command = "claudespace:implementer"
+command = "claudespace-implementer"
 
 [[templates.native.panes]]
 role = "reviewer"
-command = "claudespace:reviewer"
+command = "claudespace-reviewer"
 
 [[templates.native.panes]]
 role = "planner"
-command = "claudespace:planner"
+command = "claudespace-planner"
 
 [[templates.native.panes]]
 role = "researcher"
-command = "claudespace:researcher"
+command = "claudespace-researcher"
 '''
 
 AGENTIC_TEMPLATE_TOML = '''[templates.agentic]
@@ -138,27 +138,27 @@ entry_role = "conductor"
 
 [[templates.agentic.panes]]
 role = "conductor"
-command = "claudespace:conductor"
+command = "claudespace-conductor"
 
 [[templates.agentic.panes]]
 role = "principal"
-command = "claudespace:principal"
+command = "claudespace-principal"
 
 [[templates.agentic.panes]]
 role = "implementer"
-command = "claudespace:implementer"
+command = "claudespace-implementer"
 
 [[templates.agentic.panes]]
 role = "reviewer"
-command = "claudespace:reviewer"
+command = "claudespace-reviewer"
 
 [[templates.agentic.panes]]
 role = "planner"
-command = "claudespace:planner"
+command = "claudespace-planner"
 
 [[templates.agentic.panes]]
 role = "researcher"
-command = "claudespace:researcher"
+command = "claudespace-researcher"
 '''
 
 
@@ -180,7 +180,7 @@ def load_user_templates(path: Path = USER_TEMPLATES_PATH) -> dict[str, Template]
 
         [[templates.my-template.panes]]
         role = "principal"
-        command = "claudespace:principal"
+        command = "claudespace-principal"
 
         [[templates.my-template.panes]]
         role = "implementer"
