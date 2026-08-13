@@ -30,6 +30,7 @@ from claudespace.config import (
     USER_TEMPLATES_PATH,
     ensure_agentic_template_seeded,
     ensure_native_template_seeded,
+    migrate_legacy_command_names,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ PROMPTS_DEST = Path.home() / ".ai" / "prompts"
 SETTINGS_DEST = Path.home() / ".claude" / "settings.json"
 
 HANDOFF_HOOK_COMMAND = "claudespace-handoff"
+LEGACY_HANDOFF_HOOK_COMMAND = "claudespace:handoff"
 
 
 def _copy_all(src_dir: resources.abc.Traversable, dest_dir: Path) -> int:
@@ -62,12 +64,38 @@ def _hook_already_installed(stop_hooks: list) -> bool:
     return False
 
 
+def _remove_hook_command(stop_hooks: list, command: str) -> bool:
+    """Drop any ``hooks`` entry whose command matches, in place.
+
+    An entry is removed only if every hook inside it matches ``command``,
+    so a hand-edited entry that bundles the handoff hook alongside other
+    commands is left alone rather than silently losing its other hooks.
+    Returns ``True`` if anything was removed.
+    """
+    removed = False
+    for entry in list(stop_hooks):
+        entry_hooks = entry.get("hooks", [])
+        if entry_hooks and all(h.get("command") == command for h in entry_hooks):
+            stop_hooks.remove(entry)
+            removed = True
+    return removed
+
+
 def _install_handoff_hook() -> bool:
     """Add the claudespace handoff Stop hook to ``~/.claude/settings.json``.
 
     Merges into whatever settings already exist rather than overwriting the
     file, and is idempotent - re-running never adds a duplicate entry.
-    Returns ``True`` if the hook was newly added.
+
+    Also drops any hook entry still pointing at the old colon-named
+    ``claudespace:handoff`` command (renamed to ``claudespace-handoff`` -
+    see ``migrate_legacy_command_names`` for why) before checking whether
+    the current command is already installed, so an update replaces the
+    stale entry in place instead of leaving it alongside a second, working
+    one.
+
+    Returns ``True`` if the file was newly added or an existing entry was
+    modified.
     """
     SETTINGS_DEST.parent.mkdir(parents=True, exist_ok=True)
     settings = {}
@@ -77,8 +105,12 @@ def _install_handoff_hook() -> bool:
     hooks = settings.setdefault("hooks", {})
     stop_hooks = hooks.setdefault("Stop", [])
 
+    removed_legacy = _remove_hook_command(stop_hooks, LEGACY_HANDOFF_HOOK_COMMAND)
+
     if _hook_already_installed(stop_hooks):
-        return False
+        if removed_legacy:
+            SETTINGS_DEST.write_text(json.dumps(settings, indent=2) + "\n")
+        return removed_legacy
 
     stop_hooks.append(
         {"hooks": [{"type": "command", "command": HANDOFF_HOOK_COMMAND}]}
@@ -94,6 +126,7 @@ def sync_assets() -> None:
     commands_copied = _copy_all(assets.joinpath("commands"), COMMANDS_DEST)
     prompts_copied = _copy_all(assets.joinpath("prompts"), PROMPTS_DEST)
     hook_installed = _install_handoff_hook()
+    commands_migrated = migrate_legacy_command_names()
     native_seeded = ensure_native_template_seeded()
     agentic_seeded = ensure_agentic_template_seeded()
 
@@ -106,6 +139,10 @@ def sync_assets() -> None:
     )
     if hook_installed:
         logger.info("Installed claudespace handoff Stop hook in %s", SETTINGS_DEST)
+    if commands_migrated:
+        logger.info(
+            "Updated old colon-named claudespace commands in %s", USER_TEMPLATES_PATH
+        )
     if native_seeded:
         logger.info("Seeded 'native' template in %s", USER_TEMPLATES_PATH)
     if agentic_seeded:

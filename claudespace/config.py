@@ -164,6 +164,55 @@ command = "claudespace-researcher"
 
 USER_TEMPLATES_PATH = Path.home() / ".config" / "claudespace" / "templates.toml"
 
+# Console-script names used to be colon-separated (``claudespace:researcher``),
+# which uv's wheel installer misparses (it splits on the first colon and
+# rejects the entry point). Renamed to dashes, but anyone who ran
+# ensure_native_template_seeded()/ensure_agentic_template_seeded() before
+# that rename has the old names permanently baked into their
+# templates.toml - those seeders only write when a template is *missing*,
+# so a plain reinstall/update never touches an already-seeded file. This
+# maps each stale name to its replacement so migrate_legacy_command_names()
+# can repair existing files in place.
+_LEGACY_COMMAND_RENAMES = {
+    "claudespace:principal": "claudespace-principal",
+    "claudespace:planner": "claudespace-planner",
+    "claudespace:implementer": "claudespace-implementer",
+    "claudespace:reviewer": "claudespace-reviewer",
+    "claudespace:researcher": "claudespace-researcher",
+    "claudespace:conductor": "claudespace-conductor",
+    "claudespace:sync-assets": "claudespace-sync-assets",
+    "claudespace:handoff": "claudespace-handoff",
+    "claudespace:update": "claudespace-update",
+}
+
+
+def migrate_legacy_command_names(path: Path = USER_TEMPLATES_PATH) -> bool:
+    """Rewrite any old colon-named claudespace commands in ``templates.toml``.
+
+    Called by ``sync_assets()`` on every install/update, before the
+    native/agentic seeders. Does a plain string substitution rather than a
+    parse/rewrite round-trip through ``tomllib`` (which has no writer and
+    would require a TOML-writing dependency) - safe here because the old
+    names are a fixed, known set of literal strings that only ever appear
+    as ``command = "claudespace:<role>"`` values, never as substrings of
+    anything a user would plausibly write themselves.
+
+    Returns ``True`` if the file was modified.
+    """
+    if not path.exists():
+        return False
+
+    existing = path.read_text()
+    updated = existing
+    for old, new in _LEGACY_COMMAND_RENAMES.items():
+        updated = updated.replace(f'"{old}"', f'"{new}"')
+
+    if updated == existing:
+        return False
+
+    path.write_text(updated)
+    return True
+
 
 def load_user_templates(path: Path = USER_TEMPLATES_PATH) -> dict[str, Template]:
     """Load user-defined templates from a TOML file, if present.
