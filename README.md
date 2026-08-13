@@ -142,7 +142,7 @@ From there:
 
 - If it's a genuine product-facing feature with open scope questions,
   researcher hands off to **planner** - work through the pipeline pane by
-  pane (or turn on `--auto-handoff`, see below, and mostly watch).
+  pane (or leave auto-handoff on, the default, see below, and mostly watch).
 - If it's a well-scoped engineering change with no product ambiguity
   (a refactor, a dependency bump, an infra tweak), researcher skips
   straight to **principal**.
@@ -240,7 +240,8 @@ claudespace                 # build/attach a workspace for the current directory
 claudespace --root ~/proj   # build/attach for a specific folder
 claudespace --new           # force a new window even if one exists
 claudespace --list-templates
-claudespace --template agentic --auto-handoff   # unattended multi-feature run, see below
+claudespace --template agentic   # unattended multi-feature run (auto-handoff is on by default), see below
+claudespace --manual             # disable auto-handoff: press enter to advance each handoff
 ```
 
 ## Pipeline handoff
@@ -251,12 +252,12 @@ Stop hook (`claudespace-handoff`, wired into `~/.claude/settings.json` by
 `sync-assets`) watches for fresh markers and sends the next role's prompt
 into its pane: researcher → planner → principal → implementer → reviewer.
 
-By default handoffs only *prefill* the next pane's input - you press enter
-to advance. Pass `--auto-handoff` at launch to have successful handoffs
-submit automatically. Rejected or blocked work (principal bouncing a vague
-Planning Brief back to planner, reviewer returning CHANGES REQUIRED to
-implementer) always prefills only, regardless of `--auto-handoff` - those
-always wait for you.
+By default, successful handoffs submit automatically. Pass `--manual` at
+launch to only *prefill* the next pane's input instead - you press enter
+to advance. Rejected or blocked work (principal bouncing a vague Planning
+Brief back to planner, reviewer returning CHANGES REQUIRED to implementer)
+always prefills only, regardless of auto-handoff - those always wait for
+you.
 
 ### Bouncing questions, not just rejections
 
@@ -275,7 +276,7 @@ pipeline - principal or planner answering an implementer question hands
 back to implementer directly, not to implementer's normal predecessor. This
 uses the same `.blocked` marker mechanism as a rejection (see
 `pipeline.py`'s `Stage.bounce_to`/`alt_next_roles`), so it inherits the same
-always-prefill-only behavior regardless of `--auto-handoff`.
+always-prefill-only behavior regardless of auto-handoff.
 
 The handoff's final submit keystroke is verified, not fire-and-forget: after
 sending Enter, it polls the destination pane briefly to confirm the typed
@@ -303,7 +304,7 @@ backlog and drives the pipeline through it automatically, one item at a
 time, until the backlog is done, blocked, or a run limit is hit:
 
 ```
-claudespace --template agentic --auto-handoff
+claudespace --template agentic
 ```
 
 Then in the conductor pane: `/conductor <describe the goal>`.
@@ -346,9 +347,10 @@ silently across many features before you notice. It's prompt-enforced by
 conductor itself, the same as every other pipeline instruction in this
 project - not a hard code-level limit.
 
-`agentic` needs `--auto-handoff` to actually run unattended; without it
-every handoff (including conductor's own dispatches) only prefills and
-waits for you to press enter, same as any other template.
+`agentic` relies on auto-handoff (on by default) to actually run
+unattended; with `--manual`, every handoff (including conductor's own
+dispatches) only prefills and waits for you to press enter, same as any
+other template.
 
 ## Adding your own template
 

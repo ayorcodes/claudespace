@@ -25,7 +25,7 @@ async def open_workspace(
     root: str,
     template_name: str,
     force_new: bool,
-    auto_handoff: bool = False,
+    auto_handoff: bool = True,
     lazy: bool = False,
     max_items: int = iterm_ops.DEFAULT_MAX_ITEMS,
     just_launched_iterm: bool = False,

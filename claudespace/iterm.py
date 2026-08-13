@@ -316,7 +316,7 @@ async def build_workspace(
     root: str,
     template_name: str,
     template: Template,
-    auto_handoff: bool = False,
+    auto_handoff: bool = True,
     lazy: bool = False,
     max_items: int = DEFAULT_MAX_ITEMS,
 ) -> iterm2.Window:

@@ -46,13 +46,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Always build a new workspace window, even if one already exists.",
     )
     parser.add_argument(
-        "--auto-handoff",
-        action="store_true",
-        help="Automatically submit pipeline handoffs between panes on success "
-        "(researcher->planner->principal->implementer->reviewer). Without "
-        "this flag, handoffs only prefill the next pane's input - you press "
-        "enter to advance. Rejected/blocked handoffs always prefill-only, "
-        "regardless of this setting.",
+        "--manual",
+        dest="auto_handoff",
+        action="store_false",
+        help="Disable auto-handoff: pipeline handoffs between panes "
+        "(researcher->planner->principal->implementer->reviewer) only "
+        "prefill the next pane's input - you press enter to advance. "
+        "By default, successful handoffs auto-submit. Rejected/blocked "
+        "handoffs always prefill-only, regardless of this setting.",
     )
     parser.add_argument(
         "--lazy",
