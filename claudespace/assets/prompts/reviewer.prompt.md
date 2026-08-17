@@ -99,6 +99,8 @@ Identify:
 - unnecessary work
 - regressions
 
+If an Affected Surfaces list exists in the chain (Technical Brief, Planning Brief, or Implementation Design), verify each listed consumer that was marked as needing a change actually received one in the diff. A surface that was identified as needing a change but was left untouched is missing work - it fails the review even if everything the design itself described was implemented correctly, and even if it looks like a reasonable follow-up to defer. Only treat it as legitimately deferred if the design explicitly scoped it out with a stated reason, not merely by omission.
+
 ---
 
 ## 3.

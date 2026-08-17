@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 
 import iterm2
 
 from claudespace.config import PaneConfig, Template
 from claudespace.layouts import get_layout
+from claudespace.pipeline import think_marker_path
 from claudespace.themes import ROLE_THEMES, banner_command, build_role_profile
 
 logger = logging.getLogger(__name__)
@@ -282,6 +284,7 @@ async def _launch_pane(
     pane: PaneConfig,
     auto_handoff: bool,
     lazy: bool,
+    think: bool,
     max_items: int,
 ) -> None:
     """Tag ``session`` for ``pane``'s role and launch its command in it.
@@ -304,7 +307,8 @@ async def _launch_pane(
         f"cd {root} && export CLAUDESPACE_ROOT={root} && "
         f"export CLAUDESPACE_ROLE={pane.role} && "
         f"export CLAUDESPACE_INSTANCE={instance} && "
-        f"export CLAUDESPACE_MAX_ITEMS={max_items} && {banner}{pane.command}\n"
+        f"export CLAUDESPACE_MAX_ITEMS={max_items} && "
+        f"export CLAUDESPACE_THINK={int(think)} && {banner}{pane.command}\n"
     )
     logger.info("Launched %s (%s) in role '%s'", pane.command, root, pane.role)
 
@@ -318,6 +322,7 @@ async def build_workspace(
     template: Template,
     auto_handoff: bool = True,
     lazy: bool = False,
+    think: bool = False,
     max_items: int = DEFAULT_MAX_ITEMS,
 ) -> iterm2.Window:
     """Create a new window and launch either every pane or just the entry pane.
@@ -355,6 +360,7 @@ async def build_workspace(
             pane=entry_pane,
             auto_handoff=auto_handoff,
             lazy=True,
+            think=think,
             max_items=max_items,
         )
         await _prefill_role_command(entry_pane.role, root_session)
@@ -381,6 +387,7 @@ async def build_workspace(
             pane=pane,
             auto_handoff=auto_handoff,
             lazy=False,
+            think=think,
             max_items=max_items,
         )
 
@@ -606,6 +613,10 @@ async def reveal_role(
         pane=pane,
         auto_handoff=auto_handoff,
         lazy=True,
+        # Read back off the workspace's own marker rather than a session
+        # variable: --think is toggleable on an already-open workspace (see
+        # workspace._set_think), so the folder is the source of truth.
+        think=os.path.isfile(think_marker_path(root)),
         max_items=DEFAULT_MAX_ITEMS,
     )
     return session

@@ -242,6 +242,7 @@ claudespace --new           # force a new window even if one exists
 claudespace --list-templates
 claudespace --template agentic   # unattended multi-feature run (auto-handoff is on by default), see below
 claudespace --manual             # disable auto-handoff: press enter to advance each handoff
+claudespace --think              # autonomous: planner decides open questions instead of asking you
 ```
 
 ## Pipeline handoff
@@ -258,6 +259,24 @@ to advance. Rejected or blocked work (principal bouncing a vague Planning
 Brief back to planner, reviewer returning CHANGES REQUIRED to implementer)
 always prefills only, regardless of auto-handoff - those always wait for
 you.
+
+### `--think` (autonomous mode)
+
+The planner normally stops and asks when a product question materially
+affects scope or acceptance criteria. `claudespace --think` turns that off:
+the planner still writes each question down, but answers it itself the way
+a 30-year staff engineer at a top-tier shop would - conventional choice,
+smallest blast radius, scope narrowed rather than widened - and records it
+in the Planning Brief's **Assumptions** as `Q: ... -> A: ... (decided
+autonomously)` so you can audit or reverse any single call later. Only
+questions nobody could answer yet (business/legal/pricing, external
+dependencies) stay in **Open Questions**, and the pipeline continues past
+them.
+
+The flag writes a `.claudespace/think` marker (also exported to each pane
+as `CLAUDESPACE_THINK=1`), so it applies to an already-open workspace too:
+re-run `claudespace --think` in the folder to switch the mode on, and a
+plain `claudespace` run to switch it back off.
 
 ### Bouncing questions, not just rejections
 

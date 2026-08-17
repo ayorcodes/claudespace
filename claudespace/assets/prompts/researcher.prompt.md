@@ -115,7 +115,17 @@ Investigate the smallest possible implementation surface.
 
 ---
 
-## 3. Trace execution
+## 3. Find every consumer of what will change
+
+This step is mandatory whenever the request will modify a contract another surface depends on - an API endpoint, a shared type/schema, an exported function, a DB column, an event payload, a config key, a CLI flag. It applies even when those consumers live in a different layer or codebase (backend change with a frontend caller, library change with downstream callers, service change with another service's client).
+
+Grep for every call site / reference to the thing being changed, repository-wide. This is the one search in this workflow that should NOT be scoped down to "smallest surface" - a narrow search here is exactly how an affected surface gets silently missed. List every consumer found, even ones you conclude don't need changes - say why not.
+
+If a request is purely explanatory (no change implied), skip this step.
+
+---
+
+## 4. Trace execution
 
 Trace only the execution flow required to explain the requested behaviour.
 
@@ -151,7 +161,7 @@ Stop once the behaviour has been fully explained.
 
 ---
 
-## 4. Inspect supporting artifacts
+## 5. Inspect supporting artifacts
 
 Inspect supporting files only when they directly influence behaviour.
 
@@ -168,7 +178,7 @@ Do not inspect supporting artifacts that are unrelated to the feature.
 
 ---
 
-## 5. Document findings
+## 6. Document findings
 
 Every statement must be supported by repository evidence.
 
@@ -209,6 +219,14 @@ Provide a concise summary of the investigation.
 # Current Behaviour
 
 Explain how the feature currently works.
+
+---
+
+# Affected Surfaces
+
+List every consumer of any changed contract found in step 3 (API endpoint, shared type, exported function, DB column, event, config key), including consumers in other layers or codebases (e.g. frontend callers of a backend change). For each: state whether it needs a change, and why or why not.
+
+If step 3 was skipped (purely explanatory request, no change implied), state that.
 
 ---
 
@@ -334,7 +352,7 @@ Route directly to implementer, skipping both planner and principal, only when **
 
 - The change is trivial - a small, mechanical bug fix, typo, config tweak, or one-line logic correction, not a refactor, dependency bump, or anything touching more than a small, contiguous surface.
 - The fix is already obvious from the investigation itself. There is exactly one reasonable way to make the change; no architectural decision, tradeoff, or choice between alternatives exists for principal to actually make. If you find yourself weighing more than one approach, that is principal's job - do not skip it.
-- The blast radius is small and well-understood: no schema/migration, no new contracts or APIs, no cross-service or cross-module ripple, nothing a reviewer would need an implementation design to sanity-check against.
+- The blast radius is small and well-understood: no schema/migration, no new contracts or APIs, no cross-service or cross-module ripple, nothing a reviewer would need an implementation design to sanity-check against. If step 3 (Find every consumer of what will change) found more than zero consumers needing changes, this condition fails - route through principal instead so the cross-surface work gets designed and tracked, not implemented piecemeal.
 - There is no genuine open product question (same bar as the principal skip below).
 
 An implementation design for a change like this would just restate the one obvious fix in more words - it resolves nothing. When genuinely unsure, do not use this path; fall through to the principal skip or the planner default instead. Implementer can still bounce back up to principal on its own if it starts implementing and discovers the change is bigger than it looked, so this path is not a one-way door.

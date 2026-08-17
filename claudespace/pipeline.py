@@ -255,6 +255,19 @@ def conductor_run_marker_path(root: str) -> str:
     return f"{root.rstrip('/')}/{MARKER_DIR}/conductor-run"
 
 
+def think_marker_path(root: str) -> str:
+    """Path to the sentinel written by ``claudespace --think`` (removed by a
+    run without it), marking this workspace as autonomous: roles that would
+    normally stop and ask the user a clarifying question instead decide the
+    answer themselves, at the level of a 30-year staff engineer at a
+    top-tier shop, and record it as an explicit assumption/decision in
+    their artifact. Planner is the role this matters most for - see
+    ``planner.prompt.md``'s "Autonomous mode". Content is irrelevant - only
+    presence is checked.
+    """
+    return f"{root.rstrip('/')}/{MARKER_DIR}/think"
+
+
 # Every role except researcher - these are the panes that accumulate
 # context from a run and need clearing when a fresh researcher.done starts
 # a new topic in an already-used workspace. See handoff.py's new-topic

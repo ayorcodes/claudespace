@@ -233,7 +233,12 @@ async def _old_run_finished(
 
 
 async def _handle_new_topic(
-    connection: iterm2.Connection, *, root: str, instance: str, doc_artifact: str
+    connection: iterm2.Connection,
+    *,
+    root: str,
+    instance: str,
+    doc_artifact: str,
+    force: bool = False,
 ) -> str | None:
     """Detect whether ``doc_artifact`` (a fresh researcher.done's contents,
     or a fresh conductor.done's backlog-item description when conductor is
@@ -246,6 +251,11 @@ async def _handle_new_topic(
     Returns ``None`` if this continues the workspace's current run (no
     action needed), or a warning string to prefix the handoff prompt with
     if the old run was still in flight.
+
+    ``force`` (set for conductor-driven runs) skips the in-flight check
+    entirely: the conductor owns the pipeline and is moving to the next
+    backlog item on its own authority, so downstream panes are cleared and
+    overwritten unconditionally rather than asking a human to confirm.
     """
     app = await iterm2.async_get_app(connection)
     current_doc, run_started = await iterm_ops.get_run_doc(
@@ -258,11 +268,14 @@ async def _handle_new_topic(
         )
         return None
 
-    if await _old_run_finished(app, root=root, instance=instance, run_started=run_started):
+    if force or await _old_run_finished(
+        app, root=root, instance=instance, run_started=run_started
+    ):
         logger.info(
-            "New topic '%s' replaces finished run '%s' - clearing downstream panes",
+            "New topic '%s' replaces run '%s' (force=%s) - clearing downstream panes",
             doc_artifact,
             current_doc,
+            force,
         )
         for downstream_role in DOWNSTREAM_ROLES:
             session = await iterm_ops.find_role_session(
@@ -347,7 +360,15 @@ async def _send_handoff(
     done_path = done_marker_path(root, role)
 
     raw_blocked_content = stage.bounce_to and _read_fresh_marker(blocked_path)
-    raw_done_content = stage.next_role and _read_fresh_marker(done_path)
+    # A `.done` marker can route to `next_role` OR any `alt_next_roles`
+    # target (via a `route:` directive - see parse_done_marker). Reviewer is
+    # the case that makes the distinction matter: its `next_role` is None
+    # (PASS is terminal in a single-feature run) but it can still route
+    # forward to conductor under a conductor-driven run. Gating on
+    # `next_role` alone silently dropped that handoff, since `None and ...`
+    # short-circuits before the marker is ever read.
+    has_forward = stage.next_role or stage.alt_next_roles
+    raw_done_content = has_forward and _read_fresh_marker(done_path)
 
     new_topic_warning = None
     app = await iterm2.async_get_app(connection)
@@ -385,14 +406,22 @@ async def _send_handoff(
             # point of view: a new topic is about to occupy
             # planner/principal/implementer/reviewer, and their conversation
             # state from whatever came before needs clearing so it doesn't
-            # bleed into the new one. Conductor only ever reaches this point
-            # right after the previous item's reviewer PASS (that's what
-            # invokes it - see conductor.prompt.md), so _old_run_finished's
-            # check is always true here in practice; it still runs the same
-            # check rather than skipping it, so this stays one code path
-            # instead of a conductor-specific unconditional-clear shortcut.
+            # bleed into the new one. Under a conductor-driven run the clear
+            # is unconditional: the conductor owns the pipeline and
+            # dispatching the next backlog item is its own decision, so it
+            # never stops to ask a human whether it may overwrite the panes -
+            # it clears them and moves on. Only a human-driven /researcher
+            # run outside a conductor run keeps the in-flight check and its
+            # "this will discard that context" warning.
+            conductor_driven = role == "conductor" or os.path.isfile(
+                conductor_run_marker_path(root)
+            )
             new_topic_warning = await _handle_new_topic(
-                connection, root=root, instance=instance, doc_artifact=done_artifact
+                connection,
+                root=root,
+                instance=instance,
+                doc_artifact=done_artifact,
+                force=conductor_driven,
             )
             if new_topic_warning is not None:
                 # Collapsed to one line for the same reason parse_done_marker

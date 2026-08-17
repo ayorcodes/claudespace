@@ -56,6 +56,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "handoffs always prefill-only, regardless of this setting.",
     )
     parser.add_argument(
+        "--think",
+        action="store_true",
+        help="Autonomous mode: roles never stop to ask you clarifying "
+        "questions. The planner, instead of pausing on an open product "
+        "question, answers it the way a 30-year staff engineer at a "
+        "top-tier shop would and records the answer as an explicit "
+        "decision in the Planning Brief. Use when you're away from the "
+        "machine and don't want the pipeline stalling on a prompt. A run "
+        "without this flag turns the mode back off for that workspace.",
+    )
+    parser.add_argument(
         "--lazy",
         action="store_true",
         help="Start with only the template's entry-role pane visible. Other "
@@ -92,6 +103,7 @@ async def _run(
     force_new: bool,
     auto_handoff: bool,
     lazy: bool,
+    think: bool,
     max_items: int,
     just_launched_iterm: bool,
 ) -> None:
@@ -102,6 +114,7 @@ async def _run(
         force_new,
         auto_handoff=auto_handoff,
         lazy=lazy,
+        think=think,
         max_items=max_items,
         just_launched_iterm=just_launched_iterm,
     )
@@ -144,6 +157,7 @@ def main() -> None:
         force_new=args.new,
         auto_handoff=args.auto_handoff,
         lazy=args.lazy,
+        think=args.think,
         max_items=args.max_items,
         just_launched_iterm=not iterm_was_running,
     )

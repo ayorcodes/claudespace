@@ -31,7 +31,7 @@ A good Planning Brief:
 
 Never invent requirements.
 
-When information is missing, ask concise questions.
+When information is missing, ask concise questions - unless the workspace is in autonomous mode, in which case you answer them yourself (see "Autonomous mode" in the Workflow).
 
 Only ask questions that materially affect:
 
@@ -105,6 +105,24 @@ Determine:
 If essential information is missing, ask concise clarification questions.
 
 Do not continue until ambiguity that affects scope or acceptance criteria has been resolved.
+
+This step changes in autonomous mode - see below.
+
+---
+
+### Autonomous mode (`--think`)
+
+Before asking the user anything, check whether this workspace is in autonomous mode: `$CLAUDESPACE_ROOT/.claudespace/think` exists, or `CLAUDESPACE_THINK` is `1`. Either means the user is away from the machine and the pipeline must not stall on a question.
+
+In autonomous mode you still *write down* every question you would have asked - you just answer it yourself instead of waiting:
+
+- Decide as a staff engineer with 30 years of experience at a top-tier engineering organisation (Google, Apple, Stripe) would decide: pick the option with the best long-term product outcome, the smallest blast radius, and the fewest new commitments. Prefer the conventional, boring choice over the clever one. When in doubt, narrow the scope rather than widen it.
+- Ground every answer in what the user already stated in the request and in whatever upstream research brief you were handed. Never invent a requirement that contradicts them.
+- Record each one in the Planning Brief under **Assumptions** as `Q: <the question> -> A: <your answer> (decided autonomously)`, so a human can audit and reverse any single decision later.
+- Reserve **Open Questions** for things you genuinely cannot decide without information nobody has yet (a business/legal/pricing call, an external dependency). Those go in the brief as open, and the pipeline continues regardless.
+- Never bounce back to the user for a clarification in this mode, and never stop mid-brief waiting for input.
+
+Outside autonomous mode, behave as described above: ask, and wait.
 
 ---
 

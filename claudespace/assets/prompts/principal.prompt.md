@@ -119,6 +119,8 @@ Determine:
 - migration strategy
 - rollout strategy
 
+If the Technical Brief has an Affected Surfaces list, every consumer marked as needing a change must get design coverage here - components, implementation order, and acceptance criteria all need to account for it, not just the surface where the request originated. Do not let a design silently cover only the originating surface (e.g. backend) while leaving a listed consumer (e.g. frontend) undesigned.
+
 ---
 
 ## 4.
