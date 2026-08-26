@@ -14,7 +14,7 @@ import uuid
 
 import iterm2
 
-from claudespace.config import PaneConfig, Template
+from claudespace.config import CANONICAL_PANES, PaneConfig, Template
 from claudespace.layouts import get_layout
 from claudespace.pipeline import think_marker_path
 from claudespace.themes import ROLE_THEMES, banner_command, build_role_profile
@@ -587,11 +587,18 @@ async def reveal_role(
     branch, which likewise never touches ``layouts.py`` - the fixed-grid
     ``Layout`` tree is only used in eager mode.
 
+    ``role`` doesn't have to be one of ``template.panes`` - a role missing
+    from this workspace's own template (e.g. conductor in a ``native``
+    workspace) still gets spun up, using ``CANONICAL_PANES`` as a fallback,
+    so a role a workspace wasn't originally built with can still come alive
+    the moment the pipeline actually needs it. See handoff._reveal_destination,
+    which is the caller that decides when that's appropriate.
+
     Returns the newly launched session. Splits vertically (left/right)
     when the pane being split is wider than tall, horizontally otherwise,
     so repeated reveals don't end up slicing one dimension into slivers.
     """
-    pane = next(p for p in template.panes if p.role == role)
+    pane = next((p for p in template.panes if p.role == role), None) or CANONICAL_PANES[role]
     auto_handoff = await get_auto_handoff(app, marker=marker, instance=instance)
     template_name = await get_template_name(app, marker=marker, instance=instance) or ""
 
@@ -666,16 +673,22 @@ async def set_run_doc(
         await session.async_set_variable(RUN_STARTED_VAR, started_at)
 
 
-async def send_clear(session: "iterm2.Session") -> None:
-    """Wait for claude to be ready in ``session``, then submit ``/clear``.
+async def send_new(session: "iterm2.Session") -> None:
+    """Wait for claude to be ready in ``session``, then submit ``/new``.
+
+    ``/new`` is an alias of ``/clear`` (same underlying command: start a new
+    session with empty context, previous session stays on disk resumable
+    with ``/resume``) - used here instead of the ``/clear`` spelling so the
+    pane's own transcript reads as "started a new session" rather than
+    "history erased", even though the two are functionally identical.
 
     Used to reset a pane's conversation when a new pipeline run starts in
     an already-used workspace - see handoff.py's new-topic detection.
     """
     ready = await _wait_for_claude_prompt(session)
     if not ready:
-        logger.warning("Gave up waiting for claude to be ready - skipping /clear")
+        logger.warning("Gave up waiting for claude to be ready - skipping /new")
         return
-    await session.async_send_text("/clear")
+    await session.async_send_text("/new")
     await asyncio.sleep(SUBMIT_KEYSTROKE_SETTLE_SECONDS)
     await session.async_send_text("\r")

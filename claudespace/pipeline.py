@@ -22,11 +22,19 @@ see ``handoff.py``):
 
 - **Rejection** (principal -> planner, reviewer -> implementer): the
   downstream role's whole artifact is unacceptable and must be redone.
-- **Question** (implementer -> principal or planner; principal -> planner):
-  the asking role has a single open question that only an upstream role can
-  answer - a design/architecture question goes to principal, a
-  product/scope question goes to planner - and does not want its own work
-  redone, just the answer.
+- **Question** (implementer -> principal or planner; principal -> planner or
+  researcher; planner -> researcher): the asking role has a single open
+  question that only another role can answer - a design/architecture
+  question goes to principal, a product/scope question goes to planner, a
+  fact about the repository's current behaviour goes to researcher - and
+  does not want its own work redone, just the answer. researcher never asks
+  a question itself (bounce_to=()) - it is the pipeline's investigative
+  endpoint, nothing upstream of it to ask. Routing a fact-finding question
+  to researcher rather than the asking role investigating it directly is
+  also the cheaper choice - researcher runs a smaller model at lower effort
+  (see roles.py) specifically because targeted investigation is its whole
+  job; use this for anything beyond a single trivial grep/read, not just
+  when the asking role technically *can't* look for itself.
 - **Design request** (implementer -> principal): researcher fast-tracked a
   change straight to implementer as trivial (see `researcher`'s
   `alt_next_roles` below), but implementer discovers mid-implementation
@@ -57,6 +65,17 @@ run always surfaces to the user; under conductor, PASS instead routes
 forward to conductor via the same ``route:`` directive so it can dispatch
 the next backlog item without user involvement. Reviewer's prompt decides
 which applies by checking for ``.claudespace/conductor-run``.
+
+The same ``route: conductor`` directive covers a third case: reviewer
+handing conductor a brand-new goal (not an existing dispatched item) when
+post-review follow-up findings span more than one role's territory - see
+reviewer.prompt.md's "Post-review follow-up" section. The marker's content
+is then a free-text goal description rather than a review path, typed into
+conductor's pane exactly as a human-typed goal would be, so conductor runs
+its ordinary first-invocation flow (scan, decompose, checkpoint) on it. This
+works even when the workspace's template has no conductor pane at all - see
+``handoff._reveal_destination``'s cross-template fallback via
+``config.CANONICAL_PANES``, which spins one up on demand.
 """
 
 from __future__ import annotations
@@ -107,22 +126,48 @@ PIPELINE: dict[str, Stage] = {
     # can still bounce back up to principal on its own (see implementer's
     # bounce_to) if the change turns out to be bigger than it looked once
     # implementer starts working.
-    "researcher": Stage(next_role="planner", alt_next_roles=("principal", "implementer")),
+    #
+    # researcher never has a bounce_to of its own - it's the pipeline's
+    # investigative endpoint, nothing further upstream to ask - but it does
+    # answer questions bounced *to* it: planner and principal can both ask
+    # it a narrow fact-finding question (see their own bounce_to below)
+    # instead of investigating the repository themselves, which neither is
+    # well-positioned to do (planner is forbidden from it outright; principal
+    # is discouraged from repeating investigation - see each prompt's
+    # Never/Inputs). Both are in alt_next_roles alongside principal (used for
+    # researcher's own forward skip-ahead, unrelated to question-answering)
+    # and implementer (routing straight to implementer as a trivial skip),
+    # so researcher.done's `route:` directive can send an answer back to
+    # whichever of them asked.
+    "researcher": Stage(
+        next_role="planner", alt_next_roles=("principal", "implementer", "planner")
+    ),
     # planner's default forward target is principal (a fresh Planning
     # Brief, or an answer to a question principal bounced up - `route:
     # principal` matches the default so no alt_next_roles entry is needed
     # for that case). implementer can also bounce a product-scope question
     # straight to planner (see implementer's bounce_to); planner then must
     # route its answer back to implementer specifically, hence implementer
-    # in alt_next_roles here too.
-    "planner": Stage(next_role="principal", alt_next_roles=("implementer",)),
+    # in alt_next_roles here too. planner itself can bounce a narrow
+    # fact-finding question up to researcher via bounce_to - planner is
+    # forbidden from investigating the repository itself (see its Never
+    # list), so a missing fact has nowhere else to go.
+    "planner": Stage(
+        next_role="principal", bounce_to=("researcher",), alt_next_roles=("implementer",)
+    ),
     # principal bounces a whole rejected Planning Brief back to planner for
-    # a redo, via bounce_to. It also needs to route *back* to implementer
+    # a redo, or a narrow fact-finding question to researcher instead of
+    # investigating the repository itself (see Inputs' "do not repeat
+    # repository investigation" guidance) - both via bounce_to, disambiguated
+    # by the `route:` directive on `principal.blocked` now that there's more
+    # than one target. principal also needs to route *back* to implementer
     # when answering a question implementer bounced up to it (or a design
     # implementer requested mid-flight, see implementer's bounce_to), hence
     # implementer in alt_next_roles alongside the normal next_role.
     "principal": Stage(
-        next_role="implementer", bounce_to=("planner",), alt_next_roles=("implementer",)
+        next_role="implementer",
+        bounce_to=("planner", "researcher"),
+        alt_next_roles=("implementer",),
     ),
     # implementer previously had no bounce path at all - an implementer
     # stuck on a design question or a product/scope question had nowhere to
@@ -152,12 +197,22 @@ PIPELINE: dict[str, Stage] = {
     # checks for .claudespace/conductor-run before using this route.
     "reviewer": Stage(next_role=None, bounce_to=("implementer",), alt_next_roles=("conductor",)),
     # conductor owns backlog bookkeeping and dispatch only - it never
-    # researches/plans/designs/implements/reviews itself. Its forward
-    # target is always researcher, matching claudespace's normal entry
+    # researches/plans/designs/implements/reviews itself. Its default
+    # forward target is researcher, matching claudespace's normal entry
     # point: dispatching the next backlog item is mechanically identical to
     # a user starting a fresh /researcher run, just with the item
     # description as the topic instead of a user-typed request.
-    "conductor": Stage(next_role="researcher"),
+    #
+    # For an item conductor itself judges trivial or well-scoped enough at
+    # dispatch time (see conductor.prompt.md's "Choosing where to dispatch"),
+    # it can route straight to principal or implementer instead, skipping
+    # researcher (and, for the implementer case, planner and principal too)
+    # the same way researcher's own alt_next_roles let it skip ahead once
+    # it has investigated. Unlike researcher's skip, conductor's is made
+    # without any investigation at all - implementer/principal's prompts
+    # account for that by doing their own minimal investigation when they
+    # were dispatched with only a backlog item description and no brief.
+    "conductor": Stage(next_role="researcher", alt_next_roles=("principal", "implementer")),
 }
 
 
@@ -249,8 +304,15 @@ def conductor_run_marker_path(root: str) -> str:
     backlog item, and reviewer checks on PASS to decide whether to route
     back to conductor (``route: conductor``) or behave as terminal, as in
     the normal single-feature flow. See ``conductor.prompt.md`` and
-    ``reviewer.prompt.md``'s "On PASS" section. Content is irrelevant -
-    only presence is checked.
+    ``reviewer.prompt.md``'s "On PASS" section.
+
+    Only presence is checked by this module (``handoff.py``) - the content
+    is conductor's own bookkeeping, not something the Stop hook parses.
+    Conductor writes the project-root-relative path to whichever
+    ``docs/backlog-<slug>.md`` this run is dispatching from (a workspace can
+    accumulate several backlog files across unrelated goals over its
+    lifetime, see conductor.prompt.md's "Which backlog?"), and reads it back
+    on a goal-less invocation to know which file to resume without guessing.
     """
     return f"{root.rstrip('/')}/{MARKER_DIR}/conductor-run"
 
@@ -271,7 +333,13 @@ def think_marker_path(root: str) -> str:
 # Every role except researcher - these are the panes that accumulate
 # context from a run and need clearing when a fresh researcher.done starts
 # a new topic in an already-used workspace. See handoff.py's new-topic
-# detection. Deliberately excludes conductor: conductor doesn't accumulate
+# detection. Excludes researcher itself because it's normally the *source*
+# of the fresh marker that triggers this clearing - wiping its own pane
+# would discard the investigation that just produced the artifact. Under a
+# conductor-driven run, though, researcher's pane is a destination like any
+# other and does get cleared - see _handle_new_topic's clear_researcher
+# parameter in handoff.py, not this tuple. Deliberately excludes conductor:
+# conductor doesn't accumulate
 # per-feature conversational context the way the others do (it dispatches
 # backlog items rather than working on one feature's substance), so
 # clearing it on every new-topic detection would discard its backlog

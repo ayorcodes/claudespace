@@ -108,6 +108,20 @@ TEMPLATES: dict[str, Template] = {
     ),
 }
 
+# Canonical pane definitions for every role the pipeline itself knows how to
+# route to (see pipeline.py's PIPELINE), independent of any one template.
+# "agentic" is the superset of every built-in role, so it doubles as the
+# canonical registry rather than duplicating the list.
+#
+# Used as a fallback when a handoff needs to reveal a role a workspace's own
+# template doesn't define - most notably conductor, which "native" leaves
+# out (see reviewer.prompt.md's "Post-review follow-up" section) - so that
+# role can still be spun up on demand instead of the handoff silently going
+# nowhere. See iterm.reveal_role and handoff._reveal_destination.
+CANONICAL_PANES: dict[str, PaneConfig] = {
+    pane.role: pane for pane in TEMPLATES["agentic"].panes
+}
+
 NATIVE_TEMPLATE_TOML = '''[templates.native]
 layout = "main_left_grid_right"
 

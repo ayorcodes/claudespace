@@ -44,7 +44,7 @@ import time
 import iterm2
 
 from claudespace import iterm as iterm_ops
-from claudespace.config import get_template
+from claudespace.config import CANONICAL_PANES, get_template
 from claudespace.pipeline import (
     DOWNSTREAM_ROLES,
     PIPELINE,
@@ -239,6 +239,7 @@ async def _handle_new_topic(
     instance: str,
     doc_artifact: str,
     force: bool = False,
+    clear_researcher: bool = False,
 ) -> str | None:
     """Detect whether ``doc_artifact`` (a fresh researcher.done's contents,
     or a fresh conductor.done's backlog-item description when conductor is
@@ -256,6 +257,17 @@ async def _handle_new_topic(
     entirely: the conductor owns the pipeline and is moving to the next
     backlog item on its own authority, so downstream panes are cleared and
     overwritten unconditionally rather than asking a human to confirm.
+
+    ``clear_researcher`` additionally resets researcher's own pane. Only
+    pass this for a conductor-dispatched item, never for a fresh
+    researcher.done - when researcher itself just produced the artifact
+    that triggered this call, its pane holds the very investigation that
+    produced it, and clearing it would wipe that work. But when conductor
+    is doing the dispatching, researcher's pane is reused across backlog
+    items the same way planner/principal/implementer/reviewer's are (see
+    DOWNSTREAM_ROLES) - excluding it would leave conversation from every
+    earlier item silently piling up in that one pane while the others reset
+    normally.
     """
     app = await iterm2.async_get_app(connection)
     current_doc, run_started = await iterm_ops.get_run_doc(
@@ -271,18 +283,22 @@ async def _handle_new_topic(
     if force or await _old_run_finished(
         app, root=root, instance=instance, run_started=run_started
     ):
+        roles_to_clear = (
+            DOWNSTREAM_ROLES + ("researcher",) if clear_researcher else DOWNSTREAM_ROLES
+        )
         logger.info(
-            "New topic '%s' replaces run '%s' (force=%s) - clearing downstream panes",
+            "New topic '%s' replaces run '%s' (force=%s) - clearing panes: %s",
             doc_artifact,
             current_doc,
             force,
+            roles_to_clear,
         )
-        for downstream_role in DOWNSTREAM_ROLES:
+        for downstream_role in roles_to_clear:
             session = await iterm_ops.find_role_session(
                 app, marker=root, role=downstream_role, instance=instance
             )
             if session is not None:
-                await iterm_ops.send_clear(session)
+                await iterm_ops.send_new(session)
         await iterm_ops.set_run_doc(
             app, marker=root, instance=instance, doc=doc_artifact, started_at=time.time()
         )
@@ -303,26 +319,43 @@ async def _handle_new_topic(
 async def _reveal_destination(
     app: iterm2.App, *, root: str, instance: str, role: str, destination_role: str
 ) -> "iterm2.Session | None":
-    """In a ``--lazy`` workspace, split ``destination_role``'s pane directly
-    off of ``role``'s own pane (the one handing off) and launch it - the
-    counterpart to the panes a non-lazy workspace already launched upfront
-    in ``build_workspace``.
+    """Split ``destination_role``'s pane directly off of ``role``'s own pane
+    (the one handing off) and launch it - the counterpart to the panes a
+    non-lazy workspace already launched upfront in ``build_workspace``.
+
+    Two cases:
+
+    - ``destination_role`` is one of this workspace's own template panes: the
+      normal lazy-reveal case, gated on the workspace having been built with
+      ``--lazy`` (a non-lazy/eager workspace already launched every one of
+      its template's panes upfront, so if one of *those* is missing here,
+      something else is wrong - not something to paper over by revealing).
+    - ``destination_role`` isn't part of this workspace's template at all -
+      most notably conductor, which the default ``native`` template leaves
+      out (see reviewer.prompt.md's "Post-review follow-up" section). There
+      is no other way that pane could already exist, so this is allowed
+      regardless of ``--lazy``, as long as the role is one the pipeline
+      itself knows how to spin up (``CANONICAL_PANES``) - an unrecognized
+      custom role from a user template still can't be conjured from
+      nothing.
 
     Returns ``None`` (handled the same as "pane truly missing" by the
-    caller) if this workspace wasn't built with ``--lazy``, if its template
-    name can't be recovered, or if ``role``'s own pane is somehow gone too
-    (nothing to split off of) - all mean there's nowhere to reveal a pane,
-    e.g. an unrelated Claude Code session's Stop hook firing.
+    caller) if neither case applies, if the template name can't be
+    recovered, or if ``role``'s own pane is somehow gone too (nothing to
+    split off of) - all mean there's nowhere to reveal a pane, e.g. an
+    unrelated Claude Code session's Stop hook firing.
     """
-    if not await iterm_ops.get_lazy(app, marker=root, instance=instance):
-        return None
-
     template_name = await iterm_ops.get_template_name(app, marker=root, instance=instance)
     if template_name is None:
         return None
 
     template = get_template(template_name)
-    if destination_role not in {pane.role for pane in template.panes}:
+    in_template = destination_role in {pane.role for pane in template.panes}
+
+    if in_template:
+        if not await iterm_ops.get_lazy(app, marker=root, instance=instance):
+            return None
+    elif destination_role not in CANONICAL_PANES:
         return None
 
     source = await iterm_ops.find_role_session(
@@ -422,6 +455,7 @@ async def _send_handoff(
                 instance=instance,
                 doc_artifact=done_artifact,
                 force=conductor_driven,
+                clear_researcher=role == "conductor",
             )
             if new_topic_warning is not None:
                 # Collapsed to one line for the same reason parse_done_marker
@@ -437,10 +471,30 @@ async def _send_handoff(
                 new_topic_warning = " ".join(new_topic_warning.split())
                 submit = False
 
-        prompt_text = (
-            f"{new_topic_warning or ''}"
-            f"/{destination_role} read {done_artifact} from {role} and continue "
-        )
+        # The implementer -> reviewer handoff is the one place where the
+        # artifact being handed off (the implementer's report) is *not* the
+        # thing the destination role is supposed to treat as authoritative -
+        # reviewer.prompt.md already tells reviewer to verify the diff
+        # itself rather than trust the report, but the injected prompt text
+        # is the very first thing reviewer reads, and "read {report} and
+        # continue" on its own anchors attention on the report's own claims
+        # (including its test summary) before that instruction is reached.
+        # Spell out the diff-first framing here instead of relying on
+        # reviewer to override the handoff's own framing on its own.
+        if role == "implementer" and destination_role == "reviewer":
+            prompt_text = (
+                f"{new_topic_warning or ''}"
+                f"/reviewer implementer finished - report at {done_artifact}. "
+                "Verify the actual diff and repository state yourself before "
+                "treating anything in that report (including its test "
+                "results) as established; the report is a claim to check, "
+                "not a summary to trust. "
+            )
+        else:
+            prompt_text = (
+                f"{new_topic_warning or ''}"
+                f"/{destination_role} read {done_artifact} from {role} and continue "
+            )
     else:
         return False
 
