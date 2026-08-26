@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import uuid
 
 import iterm2
 
+from claudespace.assets_sync import PROMPTS_DEST
 from claudespace.config import CANONICAL_PANES, PaneConfig, Template
 from claudespace.layouts import get_layout
 from claudespace.pipeline import think_marker_path
@@ -274,6 +276,46 @@ async def find_workspace_window(app: iterm2.App, marker: str) -> iterm2.Window |
     return None
 
 
+def role_prompt_file(role: str) -> str:
+    """Path a role's bundled prompt would be synced to by ``assets_sync``,
+    regardless of whether it's actually present."""
+    return str(PROMPTS_DEST / f"{role}.prompt.md")
+
+
+def _command_with_baked_persona(role: str, command: str) -> str:
+    """Append ``--append-system-prompt-file`` for ``role``'s prompt onto
+    ``command``, if that doesn't already happen some other way.
+
+    Two cases skip the append:
+
+    - ``command`` is one of claudespace's own ``claudespace-<role>``
+      console scripts - ``roles.py``'s ``_exec_claude`` already adds the
+      flag itself, and appending it again here would just double up the
+      same prompt file as two separate ``--append-system-prompt-file``
+      flags, wasting tokens on a duplicate for no benefit.
+    - No prompt file exists for ``role`` (an unrecognized role name from a
+      user's own custom template with no matching prompt) - nothing to
+      bake in.
+
+    Otherwise this applies unconditionally, including to a custom command
+    from a user's own template (``~/.config/claudespace/templates.toml``
+    pointing a pane at a wrapper around a different model/CLI). That
+    wrapper isn't guaranteed to forward an unrecognized flag through to a
+    real Claude Code process the way the bundled scripts do - but the
+    existing pane-readiness check (``_wait_for_claude_prompt``) already
+    tolerates a pane that never reaches claude's prompt (it just skips the
+    prefill and logs a warning, see ``_prefill_role_command``), so the
+    failure mode for a genuinely incompatible wrapper is a visible,
+    debuggable startup error in that one pane - not silent breakage.
+    """
+    if command.strip().startswith("claudespace-"):
+        return command
+    prompt_file = role_prompt_file(role)
+    if not os.path.isfile(prompt_file):
+        return command
+    return f"{command} --append-system-prompt-file {shlex.quote(prompt_file)}"
+
+
 async def _launch_pane(
     session: "iterm2.Session",
     *,
@@ -303,14 +345,42 @@ async def _launch_pane(
     if pane.role in ROLE_THEMES:
         await session.async_set_profile_properties(build_role_profile(pane.role))
         banner = f"{banner_command(pane.role)} && "
+    command = _command_with_baked_persona(pane.role, pane.command)
     await session.async_send_text(
         f"cd {root} && export CLAUDESPACE_ROOT={root} && "
         f"export CLAUDESPACE_ROLE={pane.role} && "
         f"export CLAUDESPACE_INSTANCE={instance} && "
         f"export CLAUDESPACE_MAX_ITEMS={max_items} && "
-        f"export CLAUDESPACE_THINK={int(think)} && {banner}{pane.command}\n"
+        f"export CLAUDESPACE_THINK={int(think)} && {banner}{command}\n"
     )
-    logger.info("Launched %s (%s) in role '%s'", pane.command, root, pane.role)
+    logger.info("Launched %s (%s) in role '%s'", command, root, pane.role)
+
+
+async def _wait_for_current_session(
+    window: iterm2.Window, *, timeout: float = 5.0
+) -> iterm2.Session:
+    """Poll ``window.current_tab`` until iTerm2's App state catches up with
+    a just-created window, then return its current session.
+
+    ``Window.async_create`` can return a ``Window`` whose tab list hasn't
+    caught up yet - ``current_tab`` legitimately returns ``None`` right
+    after creation (see its own docstring: "or ``None`` if it could not be
+    determined"), since the App's live state is updated by a separate
+    async notification stream that can lag slightly behind the creation
+    RPC's response. Racing straight into ``.current_session`` on that
+    ``None`` crashes with an ``AttributeError``; poll briefly instead of
+    failing on the very first check.
+    """
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        tab = window.current_tab
+        if tab is not None:
+            return tab.current_session
+        await asyncio.sleep(0.05)
+    raise RuntimeError(
+        "Timed out waiting for the new iTerm2 window's tab to appear"
+    )
 
 
 async def build_workspace(
@@ -347,7 +417,7 @@ async def build_workspace(
         raise RuntimeError("iTerm2 refused to create a new window")
 
     instance = str(uuid.uuid4())
-    root_session = window.current_tab.current_session
+    root_session = await _wait_for_current_session(window)
 
     if lazy:
         entry_pane = next(p for p in template.panes if p.role == template.entry_role)

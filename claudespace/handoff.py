@@ -316,6 +316,26 @@ async def _handle_new_topic(
     )
 
 
+def _handoff_prefix(destination_role: str) -> str:
+    """``""`` if ``destination_role``'s pane already has its persona baked
+    into its system prompt at boot, else ``"/{destination_role} "`` to fall
+    back to the slash command's own "Read the prompt file" step.
+
+    ``iterm.py``'s ``_launch_pane`` now appends
+    ``--append-system-prompt-file`` to *every* pane's launch command
+    (claudespace's own ``claudespace-<role>`` scripts and a user's own
+    custom template commands alike - see ``_command_with_baked_persona``)
+    whenever a bundled or user-added prompt file exists for that role, so
+    "baked in" reduces to "does that file exist" - no need to inspect this
+    workspace's template or launch command at all. A role with no prompt
+    file (an unrecognized custom role name) falls back to the slash
+    prefix, same as before this feature existed.
+    """
+    if os.path.isfile(iterm_ops.role_prompt_file(destination_role)):
+        return ""
+    return f"/{destination_role} "
+
+
 async def _reveal_destination(
     app: iterm2.App, *, root: str, instance: str, role: str, destination_role: str
 ) -> "iterm2.Session | None":
@@ -421,13 +441,13 @@ async def _send_handoff(
             return False
         marker_path = blocked_path
         submit = await iterm_ops.get_auto_handoff(app, marker=root, instance=instance)
-        # No `/{destination_role}` prefix: the destination pane was booted
-        # via roles.py with its role prompt already resident in its system
-        # prompt (`--append-system-prompt-file`), so there's nothing left
-        # for a slash-command invocation to (re-)adopt - see roles.py's
-        # `_exec_claude` docstring.
+        # The `/{destination_role}` prefix is only omitted when that pane's
+        # persona is already baked into its system prompt - see
+        # _handoff_prefix. A role with no prompt file still needs it on
+        # every handoff, same as before that feature existed.
+        prefix = _handoff_prefix(destination_role)
         prompt_text = (
-            f"{role} sent this back - see "
+            f"{prefix}{role} sent this back - see "
             f"{blocked_artifact} "
         )
     elif raw_done_content:
@@ -486,13 +506,12 @@ async def _send_handoff(
         # (including its test summary) before that instruction is reached.
         # Spell out the diff-first framing here instead of relying on
         # reviewer to override the handoff's own framing on its own.
-        # No `/{destination_role}` prefix here either - see the blocked-marker
-        # branch above for why: the destination pane already has its role
-        # prompt resident via `--append-system-prompt-file`, so plain
-        # continuation text is enough.
+        # Same conditional `/{destination_role}` prefix as the blocked-marker
+        # branch above - see _handoff_prefix.
+        prefix = _handoff_prefix(destination_role)
         if role == "implementer" and destination_role == "reviewer":
             prompt_text = (
-                f"{new_topic_warning or ''}"
+                f"{new_topic_warning or ''}{prefix}"
                 f"implementer finished - report at {done_artifact}. "
                 "Verify the actual diff and repository state yourself before "
                 "treating anything in that report (including its test "
@@ -501,7 +520,7 @@ async def _send_handoff(
             )
         else:
             prompt_text = (
-                f"{new_topic_warning or ''}"
+                f"{new_topic_warning or ''}{prefix}"
                 f"read {done_artifact} from {role} and continue "
             )
     else:

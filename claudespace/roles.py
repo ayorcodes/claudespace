@@ -10,8 +10,7 @@ from __future__ import annotations
 import os
 import sys
 
-
-PROMPTS_DIR = os.path.expanduser("~/.ai/prompts")
+from claudespace.assets_sync import PROMPTS_DEST
 
 
 def _exec_claude(model: str, effort: str) -> None:
@@ -36,7 +35,7 @@ def _exec_claude(model: str, effort: str) -> None:
     role = sys._getframe(1).f_code.co_name
     env = dict(os.environ, CLAUDESPACE_ROLE=role)
     env.setdefault("CLAUDESPACE_ROOT", os.getcwd())
-    prompt_file = os.path.join(PROMPTS_DIR, f"{role}.prompt.md")
+    prompt_file = str(PROMPTS_DEST / f"{role}.prompt.md")
     os.execvpe(
         "claude",
         [

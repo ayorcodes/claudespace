@@ -34,16 +34,30 @@ files a Stop hook watches for - no copy-pasting context between panes.
 
 ## How it works
 
-Every role is a Claude Code session booted with its prompt from
-`claudespace/assets/prompts/` already baked into its system prompt (via
-`--append-system-prompt-file`), so the persona lives on the pane's process
-rather than in its conversation - it's resent on every request and survives
-`/new`/`/clear` with nothing to re-read. The matching slash command
-(`/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`,
-`/conductor`) is how a human kicks off the first task in a pane; pipeline
-handoffs afterward just send plain continuation text. Each role reads only
-the artifacts it needs, produces exactly one artifact of its own, and stops
-- it never reaches forward or backward into another role's job.
+Every role's pane is launched with its prompt from `claudespace/assets/prompts/`
+already baked into its system prompt (via `--append-system-prompt-file`),
+so the persona lives on the pane's process rather than in its conversation
+- it's resent on every request and survives `/new`/`/clear` with nothing to
+re-read. Pipeline handoffs into such a pane send plain continuation text
+with no slash command at all. This applies automatically to any pane whose
+role has a prompt file, regardless of what launches it: claudespace's own
+`claudespace-<role>` console scripts (which add the flag themselves, see
+`roles.py`), or a custom command from your own template
+(`~/.config/claudespace/templates.toml`) - claudespace appends the flag to
+that command too before typing it into the pane (see `iterm.py`'s
+`_command_with_baked_persona`). The one thing that opts a pane out is a
+role name with no matching prompt file (an unrecognized custom role) -
+that pane falls back to the slash command (`/researcher`, `/planner`,
+`/principal`, `/implementer`, `/reviewer`, `/conductor`) re-reading a
+prompt file each handoff, same as before this feature existed. Note that a
+custom command isn't guaranteed to actually be `claude` under a different
+name - if it doesn't forward the appended flag through, or errors on an
+unrecognized flag, that pane just fails to reach claude's ready prompt at
+launch (a visible, debuggable error in that one pane, not silent
+breakage - see `_wait_for_claude_prompt`). The matching slash command is
+always how a human kicks off the first task in any pane. Each role reads
+only the artifacts it needs, produces exactly one artifact of its own, and
+stops - it never reaches forward or backward into another role's job.
 
 | role | question it answers | reads | produces | never does |
 |---|---|---|---|---|
