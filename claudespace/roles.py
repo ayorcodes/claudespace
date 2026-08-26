@@ -11,6 +11,9 @@ import os
 import sys
 
 
+PROMPTS_DIR = os.path.expanduser("~/.ai/prompts")
+
+
 def _exec_claude(model: str, effort: str) -> None:
     """Replace this process with ``claude --model <model> --effort <effort> <extra args>``.
 
@@ -19,10 +22,21 @@ def _exec_claude(model: str, effort: str) -> None:
     ``CLAUDESPACE_ROOT`` is expected to already be set by the shell command
     that launched this pane (``workspace.py`` sends ``cd <root> && ...``);
     fall back to the current directory if it is somehow missing.
+
+    Also appends the role's prompt file to Claude's system prompt via
+    ``--append-system-prompt-file``, so the persona lives on the process
+    itself rather than in conversation history: it's resent with every
+    request regardless of turn count, and survives ``/new``/``/clear``
+    (which only reset conversation messages, not how this process was
+    launched) with nothing to re-read or re-adopt. See handoff.py, which
+    used to have every handoff re-invoke the role's slash command - and
+    with it, a fresh "read the prompt file" instruction - purely to keep
+    an already-warm pane's persona intact.
     """
     role = sys._getframe(1).f_code.co_name
     env = dict(os.environ, CLAUDESPACE_ROLE=role)
     env.setdefault("CLAUDESPACE_ROOT", os.getcwd())
+    prompt_file = os.path.join(PROMPTS_DIR, f"{role}.prompt.md")
     os.execvpe(
         "claude",
         [
@@ -30,6 +44,7 @@ def _exec_claude(model: str, effort: str) -> None:
             "--model", model,
             "--effort", effort,
             "--permission-mode", "auto",
+            "--append-system-prompt-file", prompt_file,
             *sys.argv[1:],
         ],
         env,

@@ -17,8 +17,8 @@ actually persisted its document. See ``assets/prompts/*.prompt.md``.
 ## Bounces vs. questions
 
 ``.blocked`` covers two distinct situations, both routed the same way (back
-to one of ``bounce_to``, always prefill-only regardless of auto-handoff -
-see ``handoff.py``):
+to one of ``bounce_to``, subject to the same auto-handoff toggle as a
+forward ``.done`` handoff - see ``handoff.py``):
 
 - **Rejection** (principal -> planner, reviewer -> implementer): the
   downstream role's whole artifact is unacceptable and must be redone.

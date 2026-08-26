@@ -50,6 +50,7 @@ A workspace is reused across multiple, unrelated goals over its lifetime - one b
 On first invocation (no backlog file yet):
 
 - Perform a lightweight repository scan - enough to decompose the goal into a sensible, ordered set of features, not enough to explain how any one of them should be built. This is breadth, not depth. Do not produce a Technical Brief; that is researcher's job, done per-item later.
+- If the scan surfaces a memory note (`<slug>-notes.md` or similar, left by reviewer next to a related feature's docs - see reviewer.prompt.md's "Leave memory notes alongside the feature docs") relevant to an area the goal touches, note it inline on the backlog item it bears on (e.g. "see docs/feature-notes.md - a prior attempt at this was reverted for X"). This is a byproduct of the scan you're already doing, not a separate investigation - do not go looking for notes beyond what the scan already touches.
 - Decompose the goal into an ordered backlog of discrete, independently reviewable units of work.
 - Persist the backlog (see Backlog Format).
 - Stop and hand the backlog to the user for review before anything else happens (see Completion) - this is the one mandatory checkpoint in an otherwise unattended run.

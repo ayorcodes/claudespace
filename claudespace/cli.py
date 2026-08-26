@@ -10,9 +10,10 @@ import sys
 
 import iterm2
 
-from claudespace import environment, update, utils, workspace
+from claudespace import environment, update, utils, watchdog, workspace
 from claudespace.config import DEFAULT_TEMPLATE, get_template, list_templates
 from claudespace.iterm import DEFAULT_MAX_ITEMS
+from claudespace.watchdog import DEFAULT_INTERVAL_SECONDS, DEFAULT_STALL_AFTER_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,32 @@ def _build_parser() -> argparse.ArgumentParser:
         "update",
         help="Pull the latest claudespace from git, reinstall via pipx, "
         "and resync bundled commands/prompts.",
+    )
+    watchdog_parser = subparsers.add_parser(
+        "watchdog",
+        help="Watch an open workspace's panes for stalls (stuck dialog, "
+        "runaway tool loop, crashed process) and notify when one is found. "
+        "Runs until interrupted - meant to be left running in its own "
+        "terminal or backgrounded alongside an unattended --think/conductor "
+        "run.",
+    )
+    watchdog_parser.add_argument(
+        "--root",
+        default=os.getcwd(),
+        help="Workspace folder to watch (default: current directory).",
+    )
+    watchdog_parser.add_argument(
+        "--interval",
+        type=float,
+        default=DEFAULT_INTERVAL_SECONDS,
+        help=f"Seconds between polls (default: {DEFAULT_INTERVAL_SECONDS}).",
+    )
+    watchdog_parser.add_argument(
+        "--stall-after",
+        type=float,
+        default=DEFAULT_STALL_AFTER_SECONDS,
+        help="Seconds of unchanged, non-idle screen output before a pane is "
+        f"flagged as possibly stalled (default: {DEFAULT_STALL_AFTER_SECONDS}).",
     )
     parser.add_argument(
         "--root",
@@ -50,10 +77,9 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="auto_handoff",
         action="store_false",
         help="Disable auto-handoff: pipeline handoffs between panes "
-        "(researcher->planner->principal->implementer->reviewer) only "
-        "prefill the next pane's input - you press enter to advance. "
-        "By default, successful handoffs auto-submit. Rejected/blocked "
-        "handoffs always prefill-only, regardless of this setting.",
+        "(researcher->planner->principal->implementer->reviewer), including "
+        "rejected/blocked bounces, only prefill the next pane's input - you "
+        "press enter to advance. By default, all handoffs auto-submit.",
     )
     parser.add_argument(
         "--think",
@@ -120,6 +146,23 @@ async def _run(
     )
 
 
+async def _run_watchdog(
+    connection: iterm2.Connection, *, root: str, interval: float, stall_after: float
+) -> None:
+    # No per-window instance UUID is available from a bare `claudespace
+    # watchdog` invocation (that's only ever minted at `build_workspace`
+    # time) - matches by root marker alone, same fallback build_workspace's
+    # older-pane handling already relies on. Ambiguous only when two
+    # windows are open against the same resolved root simultaneously.
+    await watchdog.run_watchdog(
+        connection,
+        root=os.path.abspath(os.path.expanduser(root)),
+        instance=None,
+        interval_seconds=interval,
+        stall_after_seconds=stall_after,
+    )
+
+
 def main() -> None:
     """Entrypoint installed as the ``claudespace`` console script."""
     parser = _build_parser()
@@ -130,6 +173,20 @@ def main() -> None:
 
     if args.command == "update":
         update.run_update()
+        return
+
+    if args.command == "watchdog":
+        environment.ensure_environment(iterm_was_running=utils.is_iterm_running())
+        runner = functools.partial(
+            _run_watchdog, root=args.root, interval=args.interval, stall_after=args.stall_after
+        )
+        try:
+            iterm2.run_until_complete(runner, retry=True)
+        except KeyboardInterrupt:
+            return
+        except Exception:
+            logger.exception("Watchdog failed for '%s'", args.root)
+            sys.exit(1)
         return
 
     if args.list_templates:

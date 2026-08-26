@@ -421,8 +421,13 @@ async def _send_handoff(
             return False
         marker_path = blocked_path
         submit = await iterm_ops.get_auto_handoff(app, marker=root, instance=instance)
+        # No `/{destination_role}` prefix: the destination pane was booted
+        # via roles.py with its role prompt already resident in its system
+        # prompt (`--append-system-prompt-file`), so there's nothing left
+        # for a slash-command invocation to (re-)adopt - see roles.py's
+        # `_exec_claude` docstring.
         prompt_text = (
-            f"/{destination_role} {role} sent this back - see "
+            f"{role} sent this back - see "
             f"{blocked_artifact} "
         )
     elif raw_done_content:
@@ -481,10 +486,14 @@ async def _send_handoff(
         # (including its test summary) before that instruction is reached.
         # Spell out the diff-first framing here instead of relying on
         # reviewer to override the handoff's own framing on its own.
+        # No `/{destination_role}` prefix here either - see the blocked-marker
+        # branch above for why: the destination pane already has its role
+        # prompt resident via `--append-system-prompt-file`, so plain
+        # continuation text is enough.
         if role == "implementer" and destination_role == "reviewer":
             prompt_text = (
                 f"{new_topic_warning or ''}"
-                f"/reviewer implementer finished - report at {done_artifact}. "
+                f"implementer finished - report at {done_artifact}. "
                 "Verify the actual diff and repository state yourself before "
                 "treating anything in that report (including its test "
                 "results) as established; the report is a claim to check, "
@@ -493,7 +502,7 @@ async def _send_handoff(
         else:
             prompt_text = (
                 f"{new_topic_warning or ''}"
-                f"/{destination_role} read {done_artifact} from {role} and continue "
+                f"read {done_artifact} from {role} and continue "
             )
     else:
         return False

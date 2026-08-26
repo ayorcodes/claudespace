@@ -153,6 +153,16 @@ Record both in the Technical Brief's **Existing Implementation & Placement** sec
 
 ---
 
+## 3c. Check for prior memory notes
+
+Reviewer leaves a short memory note (`<slug>-notes.md`, or whatever naming convention the project's documentation directory already uses) next to a feature's docs every time a review passes - see reviewer.prompt.md's "Leave memory notes alongside the feature docs". If the area you're investigating has one (same directory as the docs you're already reading, named after a related past feature), read it.
+
+This is a narrow check, not a search: look only where step 3b already told you the relevant docs live. Do not go hunting through the whole documentation tree for unrelated notes.
+
+If a relevant note exists and says something that bears on this investigation - a constraint discovered during a prior implementation, a decision that was tried and reverted, an approach that was ruled out and why - record it in the Technical Brief's **Existing Implementation & Placement** section alongside what step 3b found. If none exists or nothing relevant turns up, say nothing about it; do not pad the brief noting an absence.
+
+---
+
 ## 4. Trace execution
 
 Trace only the execution flow required to explain the requested behaviour.

@@ -34,12 +34,16 @@ files a Stop hook watches for - no copy-pasting context between panes.
 
 ## How it works
 
-Every role is a Claude Code session running one of the prompts in
-`claudespace/assets/prompts/`, invoked via its matching slash command
+Every role is a Claude Code session booted with its prompt from
+`claudespace/assets/prompts/` already baked into its system prompt (via
+`--append-system-prompt-file`), so the persona lives on the pane's process
+rather than in its conversation - it's resent on every request and survives
+`/new`/`/clear` with nothing to re-read. The matching slash command
 (`/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`,
-`/conductor`). Each role reads only the artifacts it needs, produces exactly
-one artifact of its own, and stops - it never reaches forward or backward
-into another role's job.
+`/conductor`) is how a human kicks off the first task in a pane; pipeline
+handoffs afterward just send plain continuation text. Each role reads only
+the artifacts it needs, produces exactly one artifact of its own, and stops
+- it never reaches forward or backward into another role's job.
 
 | role | question it answers | reads | produces | never does |
 |---|---|---|---|---|
@@ -257,8 +261,8 @@ By default, successful handoffs submit automatically. Pass `--manual` at
 launch to only *prefill* the next pane's input instead - you press enter
 to advance. Rejected or blocked work (principal bouncing a vague Planning
 Brief back to planner, reviewer returning CHANGES REQUIRED to implementer)
-always prefills only, regardless of auto-handoff - those always wait for
-you.
+follows the same toggle: auto-submitted by default, prefill-only under
+`--manual`.
 
 ### `--think` (autonomous mode)
 
@@ -295,7 +299,7 @@ pipeline - principal or planner answering an implementer question hands
 back to implementer directly, not to implementer's normal predecessor. This
 uses the same `.blocked` marker mechanism as a rejection (see
 `pipeline.py`'s `Stage.bounce_to`/`alt_next_roles`), so it inherits the same
-always-prefill-only behavior regardless of auto-handoff.
+auto-handoff behavior described above.
 
 The handoff's final submit keystroke is verified, not fire-and-forget: after
 sending Enter, it polls the destination pane briefly to confirm the typed
@@ -370,6 +374,26 @@ project - not a hard code-level limit.
 unattended; with `--manual`, every handoff (including conductor's own
 dispatches) only prefills and waits for you to press enter, same as any
 other template.
+
+### Watching for stalls (`claudespace watchdog`)
+
+An unattended run's Stop hook only reacts when a pane actually finishes a
+turn - a pane stuck behind a permission dialog, wedged in a runaway tool
+loop, or whose `claude` process crashed outright never fires Stop, so
+nothing notices it on its own.
+
+```
+claudespace watchdog --root .
+```
+
+runs alongside an open workspace (its own terminal, or backgrounded with
+`nohup ... &`) and polls every pane's screen on an interval (`--interval`,
+default 300s). A pane whose screen is unchanged for `--stall-after` seconds
+(default 600s) *and* isn't sitting idle at claude's own prompt is flagged:
+a macOS notification, a log line, and a `.claudespace/<role>.stalled`
+marker (cleared automatically once that pane's screen moves again). Runs
+until interrupted - there's no other exit condition, since a stuck run
+might still be stuck whenever you next check.
 
 ## Adding your own template
 

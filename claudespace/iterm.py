@@ -41,9 +41,9 @@ ROLE_VAR = "user.workspaceLauncherRole"
 # ambiguous case fail loudly instead of misrouting.
 INSTANCE_VAR = "user.workspaceLauncherInstance"
 
-# Whether forward (success) handoffs auto-submit into the next pane or only
-# prefill it. Backward (blocked/rejected) handoffs always prefill-only,
-# regardless of this setting - see handoff.py.
+# Whether handoffs auto-submit into the next pane or only prefill it.
+# Applies equally to forward (success) and backward (blocked/rejected)
+# handoffs - see handoff.py.
 AUTO_HANDOFF_VAR = "user.workspaceLauncherAutoHandoff"
 
 # Whether this workspace was built with --lazy, i.e. non-entry panes were
@@ -629,7 +629,7 @@ async def reveal_role(
     return session
 
 
-async def _each_workspace_session(
+async def each_workspace_session(
     app: iterm2.App, *, marker: str, instance: str | None = None
 ):
     """Yield every session tagged with workspace ``marker``."""
@@ -649,7 +649,7 @@ async def get_run_doc(
     yet in it (a freshly built workspace, before researcher's first
     handoff).
     """
-    async for session in _each_workspace_session(app, marker=marker, instance=instance):
+    async for session in each_workspace_session(app, marker=marker, instance=instance):
         doc = await session.async_get_variable(RUN_DOC_VAR)
         started = await session.async_get_variable(RUN_STARTED_VAR)
         return doc or None, float(started) if started else None
@@ -668,7 +668,7 @@ async def set_run_doc(
     path and start time, so the next researcher.done can tell whether it's
     continuing this run or starting a new one.
     """
-    async for session in _each_workspace_session(app, marker=marker, instance=instance):
+    async for session in each_workspace_session(app, marker=marker, instance=instance):
         await session.async_set_variable(RUN_DOC_VAR, doc)
         await session.async_set_variable(RUN_STARTED_VAR, started_at)
 
