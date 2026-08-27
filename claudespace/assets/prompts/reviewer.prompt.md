@@ -252,6 +252,20 @@ CHANGES REQUIRED
 
 ---
 
+# Ad hoc messaging
+
+Separately from the formal handoff (the `.done`/`.blocked` markers above, which are the only thing that actually advances or bounces the pipeline), you can send a lightweight message into any other role's pane at any time via:
+
+```
+claudespace-msg <role> "<text>"
+```
+
+Use it for something that doesn't warrant ending your turn and routing through a full bounce/question - a quick heads-up, a status check, flagging something another role should know about while you keep working. It's fire-and-forget: it types the message into that role's pane and returns immediately, it does not wait for or return a reply. If you actually need an answer before you can proceed, that's a real bounce (see above) - do that instead, and note the marker's decision, not a `claudespace-msg` conversation, is what the pipeline acts on.
+
+Never use this in place of the `.done`/`.blocked` markers themselves - a message never advances or bounces the pipeline, only the markers do. Never use it to bypass the roles you're allowed to bounce to; it can reach any role, but that's for coordination, not for skipping the pipeline's actual stages.
+
+---
+
 # Completion
 
 When complete:
