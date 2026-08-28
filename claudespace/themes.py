@@ -10,11 +10,23 @@ roles, so contrast/readability doesn't vary pane to pane - only the hue does.
 
 Colors are Nord-derived and chosen for role fit:
 
+- conductor (violet):       drives the whole backlog - distinct from the five
 - principal (slate blue):   oversees everything - neutral, authoritative
 - planner (amber):          ideation/planning - warm, energetic
 - researcher (teal):        investigation - cool, calm
 - implementer (green):      building - "go"/action color
 - reviewer (rose):          critique - draws attention without alarm
+
+Panes are labelled two ways, since the colors alone stop being a reliable
+cue once Claude Code's TUI paints over the background:
+
+- an iTerm2 **badge** (this module) - drawn over the terminal content rather
+  than into it, so it survives the TUI and stays for the life of the pane.
+- **`claude --name <role>`** (see iterm.py) - Claude Code's own prompt box
+  and the terminal title.
+
+Setting the iTerm2 session name directly does not work: the title follows
+the running process, so the shell resets it before claude starts.
 """
 
 from __future__ import annotations
@@ -37,7 +49,25 @@ class RoleTheme:
     accent_bright: iterm2.Color
 
 
+# Badge alpha. High enough to read at a glance across the pane, low enough
+# not to compete with the text underneath it.
+_BADGE_ALPHA = 0.55
+
+
+def _badge_color(theme: RoleTheme) -> iterm2.Color:
+    """The role's accent, translucent, for use as badge text."""
+    accent = theme.accent
+    return iterm2.Color(
+        accent.red, accent.green, accent.blue, int(255 * _BADGE_ALPHA)
+    )
+
+
 ROLE_THEMES: dict[str, RoleTheme] = {
+    "conductor": RoleTheme(
+        background=iterm2.Color(45, 38, 56),  # dark violet
+        accent=iterm2.Color(180, 142, 173),  # Nord15
+        accent_bright=iterm2.Color(203, 166, 196),
+    ),
     "principal": RoleTheme(
         background=iterm2.Color(36, 44, 58),  # dark slate blue
         accent=iterm2.Color(94, 129, 172),  # Nord10
@@ -88,6 +118,13 @@ def build_role_profile(role: str) -> iterm2.LocalWriteOnlyProfile:
 
     profile.set_use_tab_color(True)
     profile.set_tab_color(theme.accent)
+
+    # The badge is the only role label that survives Claude Code's TUI: it's
+    # drawn over the terminal content rather than into it, so unlike the
+    # launch banner (which scrolls out of the alt-screen the moment claude
+    # starts) it stays put for the life of the pane.
+    profile.set_badge_text(role.upper())
+    profile.set_badge_color(_badge_color(theme))
 
     # Bright ANSI blue/cyan slots carry the accent so text explicitly
     # colored by the shell/app (e.g. prompts, highlights) picks it up too.

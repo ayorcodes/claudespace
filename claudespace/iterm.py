@@ -289,9 +289,17 @@ def role_prompt_prefix(role: str) -> str:
 
 
 def _command_with_baked_persona(role: str, command: str) -> str:
-    """Append ``--append-system-prompt-file`` for ``role``'s prompt onto
+    """Append ``--append-system-prompt-file`` and ``--name`` for ``role`` onto
     ``command``, unless no prompt file exists for ``role`` (an unrecognized
     role name from a user's own custom template).
+
+    ``--name`` labels the session in Claude Code's own prompt box and the
+    terminal title. It matters more than it looks: panes are no longer
+    prefilled with ``/<role>``, so without it a pane running the TUI has no
+    in-band indication of which role it is (the launch banner scrolls out of
+    the alt-screen immediately, and the theme background is painted over).
+    See ``themes.build_role_profile`` for the badge, which is the label that
+    stays visible.
 
     This applies to a custom command from a user's own template
     (``~/.config/claudespace/templates.toml`` pointing a pane at a wrapper
@@ -307,7 +315,10 @@ def _command_with_baked_persona(role: str, command: str) -> str:
     prompt_file = role_prompt_file(role)
     if not os.path.isfile(prompt_file):
         return command
-    return f"{command} --append-system-prompt-file {shlex.quote(prompt_file)}"
+    return (
+        f"{command} --append-system-prompt-file {shlex.quote(prompt_file)} "
+        f"--name {shlex.quote(role)}"
+    )
 
 
 async def _launch_pane(
@@ -339,6 +350,11 @@ async def _launch_pane(
     if pane.role in ROLE_THEMES:
         await session.async_set_profile_properties(build_role_profile(pane.role))
         banner = f"{banner_command(pane.role)} && "
+    # Deliberately no async_set_name here: the session title is driven by the
+    # running process, so the shell resets it to "-zsh" before claude even
+    # starts. The pane's identity comes from the profile badge (set in
+    # build_role_profile, drawn over the TUI) and `claude --name` (see
+    # _command_with_baked_persona), which sets the title from inside claude.
     command = _command_with_baked_persona(pane.role, pane.command)
     await session.async_send_text(
         f"cd {root} && export CLAUDESPACE_ROOT={root} && "

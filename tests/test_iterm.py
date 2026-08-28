@@ -111,12 +111,16 @@ class TestRolePromptPrefix:
 
 
 class TestCommandWithBakedPersona:
-    def test_appends_the_prompt_file(self, tmp_path, monkeypatch):
+    def test_appends_the_prompt_file_and_the_session_name(self, tmp_path, monkeypatch):
         monkeypatch.setattr(iterm, "PROMPTS_DEST", tmp_path)
         prompt = tmp_path / "reviewer.prompt.md"
         prompt.write_text("persona")
         command = iterm._command_with_baked_persona("reviewer", "claude --model x")
-        assert command == f"claude --model x --append-system-prompt-file {prompt}"
+        # --name is what labels the pane inside Claude Code's own TUI, now
+        # that panes are no longer prefilled with `/reviewer`.
+        assert command == (
+            f"claude --model x --append-system-prompt-file {prompt} --name reviewer"
+        )
 
     def test_quotes_a_path_containing_spaces(self, tmp_path, monkeypatch):
         directory = tmp_path / "my prompts"
@@ -129,3 +133,22 @@ class TestCommandWithBakedPersona:
     def test_leaves_the_command_alone_without_a_prompt_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(iterm, "PROMPTS_DEST", tmp_path)
         assert iterm._command_with_baked_persona("nope", "my-wrapper") == "my-wrapper"
+
+
+def test_every_pipeline_role_has_a_theme():
+    # A role with no theme gets no badge and no color, so it is unidentifiable
+    # once Claude Code's TUI paints over the pane. conductor was missing one.
+    from claudespace.pipeline import PIPELINE
+    from claudespace.themes import ROLE_THEMES
+
+    assert set(PIPELINE) <= set(ROLE_THEMES), sorted(set(PIPELINE) - set(ROLE_THEMES))
+
+
+def test_role_profile_carries_a_badge():
+    # The badge is the one role label that survives Claude Code's TUI, so a
+    # role losing it means an unidentifiable pane.
+    from claudespace.themes import build_role_profile
+
+    values = build_role_profile("researcher").values
+    assert values["Badge Text"] == '"RESEARCHER"'
+    assert "Badge Color" in values

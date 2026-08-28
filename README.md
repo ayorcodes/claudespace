@@ -61,6 +61,24 @@ it. (The exception is a whole backlog of features at once - see
 Re-running `claudespace` in the same folder reattaches to the existing window
 rather than opening a duplicate.
 
+### Which pane is which?
+
+Each pane carries its role name as a translucent **badge in its top-right
+corner**, and its own color. The badge is drawn over Claude Code's interface,
+so it stays readable no matter what the pane is doing:
+
+| role | color | |
+|---|---|---|
+| `conductor` | violet | drives a whole backlog (only in the `agentic` template) |
+| `principal` | slate blue | designs how to build it |
+| `planner` | amber | decides what to build |
+| `researcher` | teal | investigates the code - **start here** |
+| `implementer` | green | writes the code |
+| `reviewer` | rose | checks the work |
+
+The role name is also set as the session name inside Claude Code, so it shows
+in the prompt box and the terminal title.
+
 ## Everyday commands
 
 ```
@@ -72,7 +90,21 @@ claudespace --list-templates     # show available templates
 
 claudespace --manual             # don't auto-submit handoffs; you press enter
 claudespace --think              # autonomous: roles decide open questions themselves
+claudespace --lazy               # start with one pane; others appear as work reaches them
 ```
+
+**The combination worth knowing:**
+
+```
+claudespace --lazy --new --think
+```
+
+A fresh window (`--new`), starting as a single `researcher` pane rather than a
+six-way split (`--lazy`) - each further pane splits into existence only when
+work actually reaches it, so you're never looking at five idle terminals. And
+`--think` means nothing stops to ask you a question: roles that would normally
+pause decide for themselves and write the decision down, so you can start it
+and walk away. Give it a task and come back to a review.
 
 Maintenance:
 
@@ -104,32 +136,56 @@ change it.
 
 ## How it works
 
-Every role's pane is launched with its prompt from `claudespace/assets/prompts/`
-already baked into its system prompt (via `--append-system-prompt-file`),
-so the persona lives on the pane's process rather than in its conversation
-- it's resent on every request and survives `/new`/`/clear` with nothing to
-re-read. Pipeline handoffs into such a pane send plain continuation text
-with no slash command at all. This applies automatically to any pane whose
-role has a prompt file, regardless of what launches it - the built-in
-`claude` commands and a custom command from your own template
-(`~/.config/claudespace/templates.toml`) alike. claudespace appends the flag
-to whatever the pane's command is before typing it in (see `iterm.py`'s
-`_command_with_baked_persona`), so your template must not set it itself.
-Because the persona is already in the system prompt, panes are launched with
-no slash-command prefill at all - typing `/researcher` would only make the
-model read a file it has already been given. The one thing that opts a pane out is a
-role name with no matching prompt file (an unrecognized custom role) -
-that pane falls back to the slash command (`/researcher`, `/planner`,
-`/principal`, `/implementer`, `/reviewer`, `/conductor`) re-reading a
-prompt file each handoff, same as before this feature existed. Note that a
-custom command isn't guaranteed to actually be `claude` under a different
-name - if it doesn't forward the appended flag through, or errors on an
-unrecognized flag, that pane just fails to reach claude's ready prompt at
-launch (a visible, debuggable error in that one pane, not silent
-breakage - see `_wait_for_claude_prompt`). The matching slash command is
-always how a human kicks off the first task in any pane. Each role reads
-only the artifacts it needs, produces exactly one artifact of its own, and
-stops - it never reaches forward or backward into another role's job.
+### Each pane is its own Claude Code session
+
+Not one Claude switching hats - six separate `claude` processes, each with its
+own conversation, its own model, and its own system prompt. A role literally
+cannot see another role's conversation, which is the point: `implementer`
+can't quietly redesign the thing, and `reviewer` can't grade its own homework.
+
+Each role's prompt is baked into its session at launch with
+`--append-system-prompt-file`, so the role lives on the process rather than in
+the conversation. It survives `/clear`, and it costs nothing to "remind" a
+pane what it is.
+
+### Work moves between panes as files, not text
+
+This is the part that makes it a pipeline rather than six terminals.
+
+When a role finishes, it does two things:
+
+1. **Writes its real artifact** wherever your project keeps documents -
+   `docs/research/`, `docs/design/`, whatever your `CLAUDE.md` says.
+   claudespace never invents a parallel copy.
+2. **Writes a marker file** at `.claudespace/<role>.done`, whose entire
+   contents are the path to that artifact.
+
+A Stop hook (`claudespace-handoff`, installed globally into
+`~/.claude/settings.json`) fires whenever any Claude Code session finishes a
+turn. It notices the fresh marker, looks up who is next in `pipeline.py`, and
+types a message into that pane - "read `docs/research/x.md` from researcher
+and continue" - then presses enter for you.
+
+```
+researcher ──writes──▶ docs/research/rate-limiting.md
+           └─writes──▶ .claudespace/researcher.done   ("docs/research/rate-limiting.md")
+                                │
+                    Stop hook sees it
+                                ▼
+              types into the planner pane, submits
+```
+
+So the handoff is a real file on disk plus a keystroke into a real terminal.
+Nothing is held in memory, nothing is piped, and you can read every artifact
+yourself at any point. If a pane is closed, the marker still sits there.
+
+A role that gets stuck writes `.claudespace/<role>.blocked` instead, and the
+same hook routes it *backwards* - see [Pipeline handoff](#pipeline-handoff).
+
+### Each role has a narrow mandate
+
+Each reads only the artifacts it needs, produces exactly one artifact, and
+stops. It never reaches forward or backward into another role's job.
 
 | role | question it answers | reads | produces | never does |
 |---|---|---|---|---|
@@ -139,12 +195,21 @@ stops - it never reaches forward or backward into another role's job.
 | **implementer** | Build it. | Implementation Design | working code, tests, an implementation report | redesign, add unrelated scope |
 | **reviewer** | Is it actually done and correct? | Implementation Design + the diff | a review with a PASS / CHANGES REQUIRED verdict | fix issues itself, invent new requirements |
 
-Each artifact is a real file, persisted to wherever your project's own
-documentation conventions say it should live (`docs/research/`,
-`docs/design/`, or whatever `CLAUDE.md` specifies) - `claudespace` never
-invents a parallel copy. The only thing living under `.claudespace/` is
-small routing state: `<role>.done` / `<role>.blocked` marker files whose
-*content* is the path to the real artifact.
+### Custom commands and unknown roles
+
+claudespace appends `--append-system-prompt-file` and `--name` to whatever a
+pane's command is before typing it in (see `iterm.py`'s
+`_command_with_baked_persona`), so a template must not set those itself. That
+applies to a custom command from your own `templates.toml` too - a wrapper
+around a different model or CLI. Such a wrapper isn't guaranteed to be
+`claude` under another name; if it doesn't forward the appended flags, that
+pane just fails to reach claude's ready prompt at launch, which is a visible
+error in that one pane rather than silent breakage.
+
+A role with no matching prompt file (an unrecognized custom role) falls back
+to being prefilled with its slash command - `/researcher`, `/planner`,
+`/principal`, `/implementer`, `/reviewer`, `/conductor` - which re-reads a
+prompt file on each handoff.
 
 ### How the roles talk to each other
 
