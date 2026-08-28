@@ -4,24 +4,30 @@ Ships the ``planner``/``implementer``/``principal``/``researcher``/``reviewer``
 command+prompt pairs so any clone or pipx install of claudespace gets them
 registered globally, without the installer having to know their contents.
 
-Commands go to ``~/.claude/commands`` (global slash-commands); prompts go to
-``~/.ai/prompts`` (referenced by each command via its absolute ``~/.ai/prompts``
-path, so commands work regardless of the project's cwd). Existing
-files are always overwritten with the bundled version, so re-running this
-after an upgrade picks up fixes - any local edits to a prompt or command are
-not preserved.
+Commands go to ``<config>/commands`` (global slash-commands) and the ``Stop``
+hook into ``<config>/settings.json``, for *every* Claude Code config home on
+the machine - see ``claude_config_dirs``. A user with several profiles
+(``~/.claude``, ``~/.claudeMax``, ...) can point a claudespace template at a
+pane that runs under any of them, and a profile missing the hook silently
+never hands off.
 
-Also registers a global ``Stop`` hook that calls ``claudespace-handoff``
-after every turn. The hook itself is a fast no-op outside claudespace panes
-(``handoff.py`` bails out immediately if ``CLAUDESPACE_ROLE`` isn't set), so
-it's safe to install once for every Claude Code session on the machine
-rather than per-project.
+Prompts go to ``~/.ai/prompts``, which is shared: each command references it
+by absolute path, so one copy serves every config home and every cwd.
+
+Existing files are always overwritten with the bundled version, so re-running
+this after an upgrade picks up fixes - any local edits to a prompt or command
+are not preserved.
+
+The hook is a fast no-op outside claudespace panes (``handoff.py`` bails out
+immediately if ``CLAUDESPACE_ROLE`` isn't set), so it's safe to install once
+for every Claude Code session rather than per-project.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import time
 from importlib import resources
@@ -36,12 +42,62 @@ from claudespace.config import (
 
 logger = logging.getLogger(__name__)
 
-COMMANDS_DEST = Path.home() / ".claude" / "commands"
+DEFAULT_CONFIG_DIR = Path.home() / ".claude"
+COMMANDS_DEST = DEFAULT_CONFIG_DIR / "commands"
 PROMPTS_DEST = Path.home() / ".ai" / "prompts"
-SETTINGS_DEST = Path.home() / ".claude" / "settings.json"
+SETTINGS_DEST = DEFAULT_CONFIG_DIR / "settings.json"
 
 HANDOFF_HOOK_COMMAND = "claudespace-handoff"
 LEGACY_HANDOFF_HOOK_COMMAND = "claudespace:handoff"
+
+
+def claude_config_dirs() -> list[Path]:
+    """Every Claude Code config home to install the hook and commands into.
+
+    Claude Code reads its settings from ``$CLAUDE_CONFIG_DIR``, defaulting to
+    ``~/.claude``. Users routinely run more than one - a separate profile per
+    account or plan, reached through a shell alias like::
+
+        alias claudemax='CLAUDE_CONFIG_DIR=$HOME/.claudeMax claude'
+
+    and a claudespace template can point a pane at exactly such an alias. A
+    pane launched that way reads its hooks from *that* profile, so installing
+    only into ``~/.claude`` leaves those panes with no handoff hook at all -
+    or worse, whatever stale one that profile happens to still carry, which
+    is how a long-deleted ``claudespace:handoff`` kept firing and failing.
+
+    Discovery: ``$CLAUDE_CONFIG_DIR`` if set, always ``~/.claude``, plus any
+    sibling ``~/.claude*`` directory that already has a ``settings.json``
+    (i.e. a real profile, not an unrelated dotfile). Set
+    ``CLAUDESPACE_CONFIG_DIRS`` to a ``:``-separated list to override the
+    discovery entirely.
+    """
+    override = os.environ.get("CLAUDESPACE_CONFIG_DIRS")
+    if override:
+        candidates = [Path(p).expanduser() for p in override.split(os.pathsep) if p]
+    else:
+        candidates = []
+        env_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+        if env_dir:
+            candidates.append(Path(env_dir).expanduser())
+        candidates.append(DEFAULT_CONFIG_DIR)
+        candidates += [
+            path
+            for path in sorted(Path.home().glob(".claude*"))
+            if path.is_dir() and (path / "settings.json").is_file()
+        ]
+
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for path in candidates:
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key not in seen:
+            seen.add(key)
+            ordered.append(path)
+    return ordered
 
 
 def _copy_all(src_dir: resources.abc.Traversable, dest_dir: Path) -> int:
@@ -82,7 +138,7 @@ def _remove_hook_command(stop_hooks: list, command: str) -> bool:
     return removed
 
 
-def _read_settings() -> dict:
+def _read_settings(settings_path: Path) -> dict:
     """Parse ``~/.claude/settings.json``, or raise a message the user can act on.
 
     This file belongs to Claude Code, not to claudespace - it can be
@@ -92,35 +148,36 @@ def _read_settings() -> dict:
     installed, leaving a half-configured machine and no clue which file was
     at fault.
     """
-    if not SETTINGS_DEST.exists():
+    if not settings_path.exists():
         return {}
     try:
-        return json.loads(SETTINGS_DEST.read_text())
+        return json.loads(settings_path.read_text())
     except json.JSONDecodeError as exc:
         raise RuntimeError(
-            f"{SETTINGS_DEST} is not valid JSON ({exc}). claudespace needs to "
+            f"{settings_path} is not valid JSON ({exc}). claudespace needs to "
             "add its handoff Stop hook there. Fix or move that file, then "
             "re-run 'claudespace-sync-assets'."
         ) from exc
 
 
-def _write_settings(settings: dict) -> None:
+def _write_settings(settings_path: Path, settings: dict) -> None:
     """Write ``settings`` back, keeping a timestamped backup of what was there.
 
     The write is a full ``json.dumps`` rewrite, so any comments, key order
     or formatting the user had is flattened. Backing the original up first
     makes that recoverable instead of silent.
     """
-    if SETTINGS_DEST.exists():
-        backup = SETTINGS_DEST.with_name(
+    if settings_path.exists():
+        backup = settings_path.with_name(
             f"settings.json.bak-{time.strftime('%Y%m%d-%H%M%S')}"
         )
-        shutil.copyfile(SETTINGS_DEST, backup)
-        logger.info("Backed up %s to %s", SETTINGS_DEST, backup)
-    SETTINGS_DEST.write_text(json.dumps(settings, indent=2) + "\n")
+        shutil.copyfile(settings_path, backup)
+        logger.info("Backed up %s to %s", settings_path, backup)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 
 
-def _install_handoff_hook() -> bool:
+def _install_handoff_hook(settings_path: Path) -> bool:
     """Add the claudespace handoff Stop hook to ``~/.claude/settings.json``.
 
     Merges into whatever settings already exist rather than overwriting the
@@ -136,8 +193,8 @@ def _install_handoff_hook() -> bool:
     Returns ``True`` if the file was newly added or an existing entry was
     modified.
     """
-    SETTINGS_DEST.parent.mkdir(parents=True, exist_ok=True)
-    settings = _read_settings()
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings = _read_settings(settings_path)
 
     hooks = settings.setdefault("hooks", {})
     stop_hooks = hooks.setdefault("Stop", [])
@@ -146,17 +203,17 @@ def _install_handoff_hook() -> bool:
 
     if _hook_already_installed(stop_hooks):
         if removed_legacy:
-            _write_settings(settings)
+            _write_settings(settings_path, settings)
         return removed_legacy
 
     stop_hooks.append(
         {"hooks": [{"type": "command", "command": HANDOFF_HOOK_COMMAND}]}
     )
-    _write_settings(settings)
+    _write_settings(settings_path, settings)
     return True
 
 
-def remove_handoff_hook() -> bool:
+def remove_handoff_hook(settings_path: Path) -> bool:
     """Drop claudespace's Stop hook from ``~/.claude/settings.json``.
 
     The hook is global - it fires for every Claude Code session on the
@@ -166,9 +223,9 @@ def remove_handoff_hook() -> bool:
     session on the machine fails a hook forever. Returns ``True`` if
     anything was removed.
     """
-    if not SETTINGS_DEST.exists():
+    if not settings_path.exists():
         return False
-    settings = _read_settings()
+    settings = _read_settings(settings_path)
     stop_hooks = settings.get("hooks", {}).get("Stop", [])
     if not stop_hooks:
         return False
@@ -183,35 +240,47 @@ def remove_handoff_hook() -> bool:
         settings["hooks"].pop("Stop", None)
     if not settings.get("hooks"):
         settings.pop("hooks", None)
-    _write_settings(settings)
+    _write_settings(settings_path, settings)
     return True
+
+
+def _remove_bundled(subdir: str, dest_dir: Path) -> int:
+    """Delete this package's own bundled files from ``dest_dir``."""
+    removed = 0
+    for entry in resources.files("claudespace.assets").joinpath(subdir).iterdir():
+        if not entry.is_file():
+            continue
+        dest = dest_dir / entry.name
+        if dest.exists():
+            dest.unlink()
+            removed += 1
+    return removed
 
 
 def uninstall() -> None:
     """Reverse what ``sync_assets`` installed, except the user's own files.
 
-    Removes the global Stop hook and the bundled command/prompt files. Does
-    *not* touch ``~/.config/claudespace/templates.toml`` (the user's own
-    templates, which they may have customized heavily) or any
-    ``.claudespace/`` marker directory inside a project.
+    Removes the Stop hook and bundled commands from *every* config home
+    ``sync_assets`` installs into (see ``claude_config_dirs``), not just
+    ``~/.claude`` - a hook left behind in a second profile fails on every
+    turn of every session that profile runs. Does *not* touch
+    ``~/.config/claudespace/templates.toml`` (the user's own templates) or
+    any ``.claudespace/`` marker directory inside a project.
     """
-    hook_removed = remove_handoff_hook()
-
+    hooks_removed = 0
     removed_files = 0
-    assets = resources.files("claudespace.assets")
-    for subdir, dest_dir in (("commands", COMMANDS_DEST), ("prompts", PROMPTS_DEST)):
-        for entry in assets.joinpath(subdir).iterdir():
-            if not entry.is_file():
-                continue
-            dest = dest_dir / entry.name
-            if dest.exists():
-                dest.unlink()
-                removed_files += 1
+    for config_dir in claude_config_dirs():
+        if remove_handoff_hook(config_dir / "settings.json"):
+            hooks_removed += 1
+            logger.info("Removed the handoff Stop hook from %s", config_dir)
+        removed_files += _remove_bundled("commands", config_dir / "commands")
+
+    removed_files += _remove_bundled("prompts", PROMPTS_DEST)
 
     logger.info(
-        "Removed %d bundled file(s)%s",
+        "Removed %d bundled file(s) and %d Stop hook(s)",
         removed_files,
-        " and the handoff Stop hook" if hook_removed else "",
+        hooks_removed,
     )
     logger.info(
         "Left %s alone - delete it yourself if you want your templates gone too.",
@@ -223,22 +292,27 @@ def sync_assets() -> None:
     """Copy bundled commands/prompts into place, overwriting any that exist."""
     assets = resources.files("claudespace.assets")
 
-    commands_copied = _copy_all(assets.joinpath("commands"), COMMANDS_DEST)
+    config_dirs = claude_config_dirs()
+    commands_copied = 0
+    for config_dir in config_dirs:
+        commands_copied += _copy_all(assets.joinpath("commands"), config_dir / "commands")
+        if _install_handoff_hook(config_dir / "settings.json"):
+            logger.info("Installed the handoff Stop hook in %s", config_dir)
+
     prompts_copied = _copy_all(assets.joinpath("prompts"), PROMPTS_DEST)
-    hook_installed = _install_handoff_hook()
     commands_migrated = migrate_role_commands()
     native_seeded = ensure_native_template_seeded()
     agentic_seeded = ensure_agentic_template_seeded()
 
     logger.info(
-        "Synced %d command(s) to %s, %d prompt(s) to %s",
+        "Synced %d command(s) across %d Claude config dir(s) (%s), "
+        "%d prompt(s) to %s",
         commands_copied,
-        COMMANDS_DEST,
+        len(config_dirs),
+        ", ".join(str(d) for d in config_dirs),
         prompts_copied,
         PROMPTS_DEST,
     )
-    if hook_installed:
-        logger.info("Installed claudespace handoff Stop hook in %s", SETTINGS_DEST)
     if commands_migrated:
         logger.info(
             "Migrated retired claudespace-<role> commands in %s", USER_TEMPLATES_PATH
