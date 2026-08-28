@@ -122,7 +122,13 @@ done
 # Always run this, not just after a fresh pipx install: a pre-existing pipx
 # may never have had `ensurepath` run, which is exactly what leaves
 # PIPX_BIN_DIR off PATH even though this script's own install succeeds.
-pipx ensurepath >/dev/null
+#
+# Output is discarded, including stderr: when PATH is already set up pipx
+# prints a yellow "try again with the '--force' flag" advisory there and
+# exits non-zero, which reads like a failure mid-install even though nothing
+# is wrong. The PATH check near the end of this script is what actually
+# verifies the outcome, so this call's own report adds nothing.
+pipx ensurepath >/dev/null 2>&1 || true
 
 echo "Installing claudespace from $SCRIPT_DIR..."
 # Uninstall first rather than `pipx install --force`. Two reasons, both
