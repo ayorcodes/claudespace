@@ -22,6 +22,7 @@ written as its first entry.
 from __future__ import annotations
 
 import logging
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,25 +68,47 @@ class Template:
 
 DEFAULT_TEMPLATE = "native"
 
+# The model and effort each role runs at, as a plain ``claude`` invocation.
+# This is the single source of truth: the seeded ``templates.toml`` entries
+# below are generated from it, so a user reading or editing that file sees
+# the real command rather than an opaque wrapper script.
+#
+# ``--append-system-prompt-file`` is deliberately absent - ``iterm.py``'s
+# ``_command_with_baked_persona`` appends it per pane, since only it knows
+# which role a given pane is.
+ROLE_COMMANDS: dict[str, str] = {
+    "conductor": "claude --model claude-opus-5 --effort medium --permission-mode auto",
+    "principal": "claude --model claude-opus-5 --effort medium --permission-mode auto",
+    "planner": "claude --model claude-opus-5 --effort medium --permission-mode auto",
+    "implementer": "claude --model claude-sonnet-5 --effort medium --permission-mode auto",
+    "reviewer": "claude --model claude-sonnet-5 --effort medium --permission-mode auto",
+    "researcher": "claude --model claude-sonnet-5 --effort low --permission-mode auto",
+}
+
+_NATIVE_ROLES = ("principal", "implementer", "reviewer", "planner", "researcher")
+_AGENTIC_ROLES = ("conductor",) + _NATIVE_ROLES
+
+
+def _panes(roles: tuple[str, ...]) -> tuple[PaneConfig, ...]:
+    return tuple(PaneConfig(role=role, command=ROLE_COMMANDS[role]) for role in roles)
+
+
+def _template_toml(name: str, layout: str, roles: tuple[str, ...], entry_role: str = "") -> str:
+    """Render a ``[templates.<name>]`` table from ``ROLE_COMMANDS``."""
+    lines = [f"[templates.{name}]", f'layout = "{layout}"']
+    if entry_role:
+        lines.append(f'entry_role = "{entry_role}"')
+    for role in roles:
+        lines += ["", f"[[templates.{name}.panes]]", f'role = "{role}"', f'command = "{ROLE_COMMANDS[role]}"']
+    return "\n".join(lines) + "\n"
+
+
 # Built-in templates that ship purely as Python fallbacks in case
 # ``templates.toml`` is unreadable or hasn't been seeded yet. The
 # authoritative copy of "native" lives in ``templates.toml`` once
 # ``ensure_native_template_seeded`` has run (see below).
 TEMPLATES: dict[str, Template] = {
-    # claudespace-principal/claudespace-implementer/claudespace-reviewer/
-    # claudespace-planner/claudespace-researcher are console-scripts
-    # installed by this package (see roles.py), each pinned to its own
-    # model and effort level.
-    "native": Template(
-        layout="main_left_grid_right",
-        panes=(
-            PaneConfig(role="principal", command="claudespace-principal"),
-            PaneConfig(role="implementer", command="claudespace-implementer"),
-            PaneConfig(role="reviewer", command="claudespace-reviewer"),
-            PaneConfig(role="planner", command="claudespace-planner"),
-            PaneConfig(role="researcher", command="claudespace-researcher"),
-        ),
-    ),
+    "native": Template(layout="main_left_grid_right", panes=_panes(_NATIVE_ROLES)),
     # Opt-in template for unattended multi-feature runs: adds a conductor
     # pane on top of the same five pipeline roles native uses. Not merged
     # into native - a project that just wants the single-feature pipeline
@@ -97,14 +120,7 @@ TEMPLATES: dict[str, Template] = {
     "agentic": Template(
         layout="conductor_main_left_grid_right",
         entry_role="conductor",
-        panes=(
-            PaneConfig(role="conductor", command="claudespace-conductor"),
-            PaneConfig(role="principal", command="claudespace-principal"),
-            PaneConfig(role="implementer", command="claudespace-implementer"),
-            PaneConfig(role="reviewer", command="claudespace-reviewer"),
-            PaneConfig(role="planner", command="claudespace-planner"),
-            PaneConfig(role="researcher", command="claudespace-researcher"),
-        ),
+        panes=_panes(_AGENTIC_ROLES),
     ),
 }
 
@@ -122,94 +138,52 @@ CANONICAL_PANES: dict[str, PaneConfig] = {
     pane.role: pane for pane in TEMPLATES["agentic"].panes
 }
 
-NATIVE_TEMPLATE_TOML = '''[templates.native]
-layout = "main_left_grid_right"
+NATIVE_TEMPLATE_TOML = _template_toml("native", "main_left_grid_right", _NATIVE_ROLES)
 
-[[templates.native.panes]]
-role = "principal"
-command = "claudespace-principal"
-
-[[templates.native.panes]]
-role = "implementer"
-command = "claudespace-implementer"
-
-[[templates.native.panes]]
-role = "reviewer"
-command = "claudespace-reviewer"
-
-[[templates.native.panes]]
-role = "planner"
-command = "claudespace-planner"
-
-[[templates.native.panes]]
-role = "researcher"
-command = "claudespace-researcher"
-'''
-
-AGENTIC_TEMPLATE_TOML = '''[templates.agentic]
-layout = "conductor_main_left_grid_right"
-entry_role = "conductor"
-
-[[templates.agentic.panes]]
-role = "conductor"
-command = "claudespace-conductor"
-
-[[templates.agentic.panes]]
-role = "principal"
-command = "claudespace-principal"
-
-[[templates.agentic.panes]]
-role = "implementer"
-command = "claudespace-implementer"
-
-[[templates.agentic.panes]]
-role = "reviewer"
-command = "claudespace-reviewer"
-
-[[templates.agentic.panes]]
-role = "planner"
-command = "claudespace-planner"
-
-[[templates.agentic.panes]]
-role = "researcher"
-command = "claudespace-researcher"
-'''
+AGENTIC_TEMPLATE_TOML = _template_toml(
+    "agentic", "conductor_main_left_grid_right", _AGENTIC_ROLES, entry_role="conductor"
+)
 
 
 USER_TEMPLATES_PATH = Path.home() / ".config" / "claudespace" / "templates.toml"
 
-# Console-script names used to be colon-separated (``claudespace:researcher``),
-# which uv's wheel installer misparses (it splits on the first colon and
-# rejects the entry point). Renamed to dashes, but anyone who ran
-# ensure_native_template_seeded()/ensure_agentic_template_seeded() before
-# that rename has the old names permanently baked into their
-# templates.toml - those seeders only write when a template is *missing*,
-# so a plain reinstall/update never touches an already-seeded file. This
-# maps each stale name to its replacement so migrate_legacy_command_names()
-# can repair existing files in place.
-_LEGACY_COMMAND_RENAMES = {
-    "claudespace:principal": "claudespace-principal",
-    "claudespace:planner": "claudespace-planner",
-    "claudespace:implementer": "claudespace-implementer",
-    "claudespace:reviewer": "claudespace-reviewer",
-    "claudespace:researcher": "claudespace-researcher",
-    "claudespace:conductor": "claudespace-conductor",
-    "claudespace:sync-assets": "claudespace-sync-assets",
-    "claudespace:handoff": "claudespace-handoff",
-    "claudespace:update": "claudespace-update",
+# Every pane command claudespace ever shipped that has to become a plain
+# ``claude`` invocation, mapped to its replacement.
+#
+# Roles used to launch through per-role console scripts
+# (``claudespace-principal`` and friends) that hardcoded a model and effort
+# in Python. That put role configuration in two places at once - the script
+# and templates.toml - and made the model a role ran at invisible to anyone
+# reading their own template. The scripts are gone; ROLE_COMMANDS is the
+# only place a default model lives, and a template spells out its own
+# command in full.
+#
+# The colon-separated spelling (``claudespace:researcher``) predates even
+# that: uv's wheel installer misparses a colon in an entry-point name, so
+# they were renamed to dashes. Both spellings are mapped here because the
+# seeders only write when a template is *missing*, so an already-seeded
+# file is never touched by a plain reinstall and can still carry either.
+_LEGACY_ROLE_COMMANDS: dict[str, str] = {
+    legacy: ROLE_COMMANDS[role]
+    for role in ROLE_COMMANDS
+    for legacy in (f"claudespace-{role}", f"claudespace:{role}")
 }
 
 
-def migrate_legacy_command_names(path: Path = USER_TEMPLATES_PATH) -> bool:
-    """Rewrite any old colon-named claudespace commands in ``templates.toml``.
+def migrate_role_commands(path: Path = USER_TEMPLATES_PATH) -> bool:
+    """Rewrite retired ``claudespace-<role>`` pane commands in ``templates.toml``.
 
     Called by ``sync_assets()`` on every install/update, before the
     native/agentic seeders. Does a plain string substitution rather than a
     parse/rewrite round-trip through ``tomllib`` (which has no writer and
-    would require a TOML-writing dependency) - safe here because the old
-    names are a fixed, known set of literal strings that only ever appear
-    as ``command = "claudespace:<role>"`` values, never as substrings of
-    anything a user would plausibly write themselves.
+    would require a TOML-writing dependency) - safe here because the retired
+    names are a fixed, known set of literal strings that only ever appear as
+    a whole ``command = "..."`` value, never as substrings of anything a
+    user would plausibly write themselves.
+
+    A timestamped backup is written next to the file before it is modified:
+    this rewrites a file the user hand-edits, and the substitution is only
+    as good as the assumption above.
 
     Returns ``True`` if the file was modified.
     """
@@ -218,12 +192,18 @@ def migrate_legacy_command_names(path: Path = USER_TEMPLATES_PATH) -> bool:
 
     existing = path.read_text()
     updated = existing
-    for old, new in _LEGACY_COMMAND_RENAMES.items():
+    for old, new in _LEGACY_ROLE_COMMANDS.items():
+        # Match the full quoted value so a longer command that merely
+        # mentions the old name (a user's own wrapper, say) is left alone.
         updated = updated.replace(f'"{old}"', f'"{new}"')
+        updated = updated.replace(f"'{old}'", f'"{new}"')
 
     if updated == existing:
         return False
 
+    backup = path.with_suffix(f".toml.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+    backup.write_text(existing)
+    logger.info("Backed up %s to %s before migrating role commands", path, backup)
     path.write_text(updated)
     return True
 
@@ -243,7 +223,7 @@ def load_user_templates(path: Path = USER_TEMPLATES_PATH) -> dict[str, Template]
 
         [[templates.my-template.panes]]
         role = "principal"
-        command = "claudespace-principal"
+        command = "claude --model claude-opus-5 --effort medium"
 
         [[templates.my-template.panes]]
         role = "implementer"

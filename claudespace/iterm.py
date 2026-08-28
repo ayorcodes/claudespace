@@ -30,93 +30,66 @@ logger = logging.getLogger(__name__)
 WORKSPACE_VAR = "user.workspaceLauncherWorkspace"
 ROLE_VAR = "user.workspaceLauncherRole"
 
-# A UUID minted once per ``build_workspace`` call (i.e. once per physical
-# iTerm2 window) and stamped on every pane in it, exported into each pane's
-# shell as ``CLAUDESPACE_INSTANCE``. WORKSPACE_VAR alone (the resolved root
-# path) can't tell apart two *separate* windows opened against the same
-# root - e.g. a stale window left over from an earlier run plus a fresh
-# ``--new`` one, or two worktrees that happen to resolve to the same real
-# path - and ``find_role_session``/``find_workspace_window`` used to return
-# whichever matching pane they hit first when scanning ``app.windows``,
-# silently routing a handoff into the wrong terminal's session. Filtering on
-# INSTANCE_VAR (when the caller knows its own instance) makes that
-# ambiguous case fail loudly instead of misrouting.
+# A UUID minted per build_workspace call (i.e. per physical window),
+# stamped on every pane and exported as CLAUDESPACE_INSTANCE. The root path
+# alone can't distinguish two *separate* windows on the same root (a stale
+# window plus a fresh --new one, or two worktrees resolving to the same real
+# path), and the session lookups return whichever match they hit first - so
+# without this a handoff could silently land in the wrong terminal.
 INSTANCE_VAR = "user.workspaceLauncherInstance"
 
-# Whether handoffs auto-submit into the next pane or only prefill it.
-# Applies equally to forward (success) and backward (blocked/rejected)
-# handoffs - see handoff.py.
+# Whether handoffs auto-submit or only prefill. Applies to forward and
+# backward (blocked/rejected) handoffs alike.
 AUTO_HANDOFF_VAR = "user.workspaceLauncherAutoHandoff"
 
-# Whether this workspace was built with --lazy, i.e. non-entry panes were
-# never launched at build time and must be revealed (split + launched) by
-# handoff.py the first time a pipeline handoff targets them. Read by
-# handoff.py to decide whether a missing destination pane means "reveal it"
-# (lazy) vs. "the window was closed" (non-lazy - see find_role_session).
+# Whether --lazy was used, i.e. non-entry panes were never launched and must
+# be revealed on first handoff. Lets handoff.py read a missing destination
+# pane as "reveal it" rather than "the window was closed".
 LAZY_VAR = "user.workspaceLauncherLazy"
 
-# The template name the workspace was built with, so a later process (e.g.
-# handoff.py revealing a lazy pane) can look the template back up to find
-# the destination role's command - CLAUDESPACE_ROLE/ROOT env vars alone
-# don't carry this.
+# The template the workspace was built with, so handoff.py can look up a
+# destination role's command when revealing a lazy pane. The
+# CLAUDESPACE_ROLE/ROOT env vars don't carry it.
 TEMPLATE_VAR = "user.workspaceLauncherTemplate"
 
-# Default value for CLAUDESPACE_MAX_ITEMS (see --max-items in cli.py) when a
-# caller doesn't specify one - notably reveal_role's lazy-mode pane reveal,
-# which doesn't track max_items as a session variable the way
-# auto_handoff/lazy/template_name are (only the conductor pane itself ever
-# reads this value, so there's no cross-pane lookup to support - unlike
-# those three, which handoff.py needs to read from *any* pane in the
-# workspace). A --lazy workspace built with a non-default --max-items will
-# fall back to this default for conductor's env if conductor's pane is
-# revealed later rather than launched at build time.
+# Fallback for CLAUDESPACE_MAX_ITEMS (see --max-items) when a caller has
+# none - notably reveal_role. Unlike the vars above, only the conductor pane
+# reads it, so there is no cross-pane lookup to support and it isn't tracked
+# as a session variable; a --lazy workspace whose conductor pane is revealed
+# late falls back to this rather than the flag it was built with.
 DEFAULT_MAX_ITEMS = 5
 
-# An opaque identity string for the pipeline run currently occupying this
-# workspace, and the unix timestamp it started at - both set on every pane
-# the moment a researcher.done (human-triggered) or conductor.done
-# (conductor-dispatched) kicks off a run. Used by handoff.py to detect when
-# a fresh dispatch names a *different* run, meaning a new topic is starting
-# in an already-used workspace. Unset until the first run's researcher
-# hands off. Usually a done-marker's persisted-artifact path (the normal
-# human-triggered case), but for a conductor dispatch it's the backlog
-# item's free-text description instead - never parsed or read from disk,
-# only ever compared for equality, so either shape works identically here.
+# Identity of the pipeline run currently occupying this workspace, plus when
+# it started - stamped on every pane when a researcher.done (human) or
+# conductor.done (dispatched) kicks off a run, so handoff.py can tell a
+# fresh dispatch of a *different* run from a continuation. Only ever
+# compared for equality, never parsed, so the conductor case (free-text
+# backlog description rather than a path) works identically.
 RUN_DOC_VAR = "user.workspaceLauncherRunDoc"
 RUN_STARTED_VAR = "user.workspaceLauncherRunStarted"
 
-# Marker printed by claude's own input box once its TUI is ready to accept
-# text - polled for after launch so the role prefill lands in claude's
-# input rather than the shell that launched it (or an intervening dialog,
-# e.g. the first-run "trust this folder" prompt).
+# Printed by claude's input box once its TUI accepts text. Polled after
+# launch so a prefill lands in claude rather than the shell that started it,
+# or an intervening dialog (e.g. the first-run "trust this folder" prompt).
 CLAUDE_PROMPT_MARKER = "❯"
 
-# Ceiling on how long to poll for claude's prompt before giving up on
-# prefilling a given pane. If claude is stuck behind a dialog (e.g. trust
-# prompt) past this point, prefill is skipped for that pane - the user
-# still gets a normal, unprefixed session to interact with once they clear
-# the dialog themselves.
+# Give up prefilling a pane after this long - claude may be stuck behind a
+# dialog. The user still gets a normal session once they clear it.
 CLAUDE_READY_TIMEOUT_SECONDS = 15
 CLAUDE_READY_POLL_INTERVAL_SECONDS = 0.25
 
-# After sending Enter for a submit, how long to poll the screen to confirm
-# the input box actually cleared (i.e. the keystroke was registered rather
-# than lost to a mid-repaint TUI), and how many times to resend "\r" if it
-# didn't. See ``_confirm_submitted`` - this is what closes the race where a
-# handoff's prompt is typed but never submitted, silently stalling the
-# pipeline until the user notices and presses Enter themselves.
+# After sending Enter, how long to poll for the input box actually clearing,
+# and how many times to resend. Closes the race where a handoff's prompt is
+# typed but never submitted, stalling the pipeline until someone notices.
 SUBMIT_CONFIRM_TIMEOUT_SECONDS = 3
 SUBMIT_CONFIRM_POLL_INTERVAL_SECONDS = 0.2
 SUBMIT_MAX_ATTEMPTS = 3
 
-# Delay between typing the prompt text and sending the submit "\r". Claude
-# Code's TUI treats a fast burst of keystrokes as an in-progress paste, and
-# while that heuristic window is still open, "\r" is inserted as a literal
-# newline into the (multi-line-capable) input box rather than submitting it
-# - this is the "Enter just adds a new line instead of sending" failure. It
-# self-resolves within one repaint cycle, so a short pause before "\r" is
-# enough to land it as a real submit; the existing confirm/retry loop below
-# is the backstop for whatever this pause doesn't cover (e.g. system load).
+# Pause between typing text and sending "\r". Claude Code's TUI reads a fast
+# keystroke burst as an in-progress paste, and during that window "\r" is
+# inserted as a literal newline instead of submitting - the "Enter just adds
+# a new line" failure. It clears within one repaint; the confirm/retry loop
+# backstops whatever this doesn't cover.
 SUBMIT_KEYSTROKE_SETTLE_SECONDS = 0.3
 
 
@@ -138,8 +111,22 @@ async def _wait_for_claude_prompt(session: "iterm2.Session") -> bool:
 
 
 async def _prefill_role_command(role: str, session: "iterm2.Session") -> None:
-    """Wait for claude to be ready in ``session``, then prefill its input."""
-    await send_role_prompt(role, session, text=f"/{role} ", submit=False)
+    """Prefill ``session``'s input with the role's slash command, if it needs one.
+
+    A pane whose persona is already baked into its system prompt at launch
+    (see ``_command_with_baked_persona``) needs no prefill at all: the
+    slash command's only job is to make the model read
+    ``~/.ai/prompts/<role>.prompt.md``, and that file is already *in* the
+    system prompt. Prefilling it anyway made every pane read its own
+    persona a second time - roughly 5k tokens - into conversation history,
+    where it is resent on every subsequent turn. ``handoff.py`` already
+    skipped the prefix for this reason on pipeline handoffs (see
+    ``role_prompt_prefix``); the launch-time prefill was missed.
+    """
+    prefix = role_prompt_prefix(role)
+    if not prefix:
+        return
+    await send_role_prompt(role, session, text=prefix, submit=False)
 
 
 async def _screen_contains(session: "iterm2.Session", needle: str) -> bool:
@@ -282,34 +269,41 @@ def role_prompt_file(role: str) -> str:
     return str(PROMPTS_DEST / f"{role}.prompt.md")
 
 
+def role_prompt_prefix(role: str) -> str:
+    """``""`` if ``role``'s pane has its persona baked into its system prompt
+    at launch, else ``"/{role} "`` to fall back to the slash command's own
+    "read the prompt file" step.
+
+    Baking is unconditional whenever a prompt file exists (see
+    ``_command_with_baked_persona``), so this reduces to a file check - no
+    need to inspect the workspace's template or launch command. A role with
+    no prompt file (an unrecognized name from a user's own template) still
+    needs the slash command.
+
+    Used both for the launch-time prefill (``_prefill_role_command``) and
+    for every pipeline handoff (``handoff.py``), so the two can't drift.
+    """
+    if os.path.isfile(role_prompt_file(role)):
+        return ""
+    return f"/{role} "
+
+
 def _command_with_baked_persona(role: str, command: str) -> str:
     """Append ``--append-system-prompt-file`` for ``role``'s prompt onto
-    ``command``, if that doesn't already happen some other way.
+    ``command``, unless no prompt file exists for ``role`` (an unrecognized
+    role name from a user's own custom template).
 
-    Two cases skip the append:
-
-    - ``command`` is one of claudespace's own ``claudespace-<role>``
-      console scripts - ``roles.py``'s ``_exec_claude`` already adds the
-      flag itself, and appending it again here would just double up the
-      same prompt file as two separate ``--append-system-prompt-file``
-      flags, wasting tokens on a duplicate for no benefit.
-    - No prompt file exists for ``role`` (an unrecognized role name from a
-      user's own custom template with no matching prompt) - nothing to
-      bake in.
-
-    Otherwise this applies unconditionally, including to a custom command
-    from a user's own template (``~/.config/claudespace/templates.toml``
-    pointing a pane at a wrapper around a different model/CLI). That
+    This applies to a custom command from a user's own template
+    (``~/.config/claudespace/templates.toml`` pointing a pane at a wrapper
+    around a different model/CLI) as much as to the built-in ones. That
     wrapper isn't guaranteed to forward an unrecognized flag through to a
-    real Claude Code process the way the bundled scripts do - but the
-    existing pane-readiness check (``_wait_for_claude_prompt``) already
-    tolerates a pane that never reaches claude's prompt (it just skips the
-    prefill and logs a warning, see ``_prefill_role_command``), so the
-    failure mode for a genuinely incompatible wrapper is a visible,
-    debuggable startup error in that one pane - not silent breakage.
+    real Claude Code process - but the existing pane-readiness check
+    (``_wait_for_claude_prompt``) already tolerates a pane that never
+    reaches claude's prompt (it just skips the prefill and logs a warning,
+    see ``_prefill_role_command``), so the failure mode for a genuinely
+    incompatible wrapper is a visible, debuggable startup error in that one
+    pane - not silent breakage.
     """
-    if command.strip().startswith("claudespace-"):
-        return command
     prompt_file = role_prompt_file(role)
     if not os.path.isfile(prompt_file):
         return command
@@ -556,52 +550,45 @@ async def find_role_session(
     return None
 
 
+async def _get_workspace_var(
+    app: iterm2.App, *, marker: str, instance: str | None, name: str
+):
+    """Read a session variable off any pane in the workspace tagged ``marker``.
+
+    Every pane in a workspace carries the same value for these, so the first
+    match answers for all of them. ``None`` if the workspace can't be found.
+    """
+    async for session in each_workspace_session(app, marker=marker, instance=instance):
+        return await session.async_get_variable(name)
+    return None
+
+
 async def get_auto_handoff(
     app: iterm2.App, *, marker: str, instance: str | None = None
 ) -> bool:
-    """Read the auto-handoff toggle for the workspace tagged ``marker``.
-
-    Defaults to ``False`` (prefill-only) if the workspace can't be found.
-    """
-    for window in app.windows:
-        for tab in window.tabs:
-            for session in tab.sessions:
-                if await _matches_workspace(session, marker=marker, instance=instance):
-                    value = await session.async_get_variable(AUTO_HANDOFF_VAR)
-                    return bool(value)
-    return False
+    """Auto-handoff toggle; ``False`` (prefill-only) if not found."""
+    return bool(
+        await _get_workspace_var(
+            app, marker=marker, instance=instance, name=AUTO_HANDOFF_VAR
+        )
+    )
 
 
-async def get_lazy(
-    app: iterm2.App, *, marker: str, instance: str | None = None
-) -> bool:
-    """Read the ``--lazy`` toggle for the workspace tagged ``marker``.
-
-    Defaults to ``False`` if the workspace can't be found.
-    """
-    for window in app.windows:
-        for tab in window.tabs:
-            for session in tab.sessions:
-                if await _matches_workspace(session, marker=marker, instance=instance):
-                    value = await session.async_get_variable(LAZY_VAR)
-                    return bool(value)
-    return False
+async def get_lazy(app: iterm2.App, *, marker: str, instance: str | None = None) -> bool:
+    """``--lazy`` toggle; ``False`` if not found."""
+    return bool(
+        await _get_workspace_var(app, marker=marker, instance=instance, name=LAZY_VAR)
+    )
 
 
 async def get_template_name(
     app: iterm2.App, *, marker: str, instance: str | None = None
 ) -> str | None:
-    """Read the template name the workspace tagged ``marker`` was built with.
-
-    ``None`` if the workspace can't be found.
-    """
-    for window in app.windows:
-        for tab in window.tabs:
-            for session in tab.sessions:
-                if await _matches_workspace(session, marker=marker, instance=instance):
-                    value = await session.async_get_variable(TEMPLATE_VAR)
-                    return value or None
-    return None
+    """Template the workspace was built with; ``None`` if not found."""
+    value = await _get_workspace_var(
+        app, marker=marker, instance=instance, name=TEMPLATE_VAR
+    )
+    return value or None
 
 
 def _cell_area(session: "iterm2.Session") -> float:

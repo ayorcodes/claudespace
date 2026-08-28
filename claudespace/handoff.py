@@ -3,7 +3,7 @@
 Invoked by the ``claudespace-handoff`` Stop hook after a pane finishes a
 turn. Reads which role/workspace it's running in from
 ``CLAUDESPACE_ROLE``/``CLAUDESPACE_ROOT`` (set when the pane was launched -
-see ``roles.py`` and ``iterm.py``), checks for a fresh completion marker,
+see ``iterm.py``'s ``_launch_pane``), checks for a fresh completion marker,
 and if one exists, prefills (and possibly submits) the destination pane's
 prompt with a reference to the real artifact path the marker names.
 
@@ -316,26 +316,6 @@ async def _handle_new_topic(
     )
 
 
-def _handoff_prefix(destination_role: str) -> str:
-    """``""`` if ``destination_role``'s pane already has its persona baked
-    into its system prompt at boot, else ``"/{destination_role} "`` to fall
-    back to the slash command's own "Read the prompt file" step.
-
-    ``iterm.py``'s ``_launch_pane`` now appends
-    ``--append-system-prompt-file`` to *every* pane's launch command
-    (claudespace's own ``claudespace-<role>`` scripts and a user's own
-    custom template commands alike - see ``_command_with_baked_persona``)
-    whenever a bundled or user-added prompt file exists for that role, so
-    "baked in" reduces to "does that file exist" - no need to inspect this
-    workspace's template or launch command at all. A role with no prompt
-    file (an unrecognized custom role name) falls back to the slash
-    prefix, same as before this feature existed.
-    """
-    if os.path.isfile(iterm_ops.role_prompt_file(destination_role)):
-        return ""
-    return f"/{destination_role} "
-
-
 async def _reveal_destination(
     app: iterm2.App, *, root: str, instance: str, role: str, destination_role: str
 ) -> "iterm2.Session | None":
@@ -441,11 +421,9 @@ async def _send_handoff(
             return False
         marker_path = blocked_path
         submit = await iterm_ops.get_auto_handoff(app, marker=root, instance=instance)
-        # The `/{destination_role}` prefix is only omitted when that pane's
-        # persona is already baked into its system prompt - see
-        # _handoff_prefix. A role with no prompt file still needs it on
-        # every handoff, same as before that feature existed.
-        prefix = _handoff_prefix(destination_role)
+        # Omitted when that pane's persona is already baked into its
+        # system prompt - see iterm.role_prompt_prefix.
+        prefix = iterm_ops.role_prompt_prefix(destination_role)
         prompt_text = (
             f"{prefix}{role} sent this back - see "
             f"{blocked_artifact} "
@@ -506,9 +484,8 @@ async def _send_handoff(
         # (including its test summary) before that instruction is reached.
         # Spell out the diff-first framing here instead of relying on
         # reviewer to override the handoff's own framing on its own.
-        # Same conditional `/{destination_role}` prefix as the blocked-marker
-        # branch above - see _handoff_prefix.
-        prefix = _handoff_prefix(destination_role)
+        # Same conditional prefix as the blocked-marker branch above.
+        prefix = iterm_ops.role_prompt_prefix(destination_role)
         if role == "implementer" and destination_role == "reviewer":
             prompt_text = (
                 f"{new_topic_warning or ''}{prefix}"

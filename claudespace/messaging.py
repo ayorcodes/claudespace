@@ -127,7 +127,7 @@ def main() -> None:
 
     Reads the sender's own role/workspace from ``CLAUDESPACE_ROLE``/
     ``CLAUDESPACE_ROOT``/``CLAUDESPACE_INSTANCE`` (set on every claudespace
-    pane at launch - see ``roles.py``/``iterm.py``), exactly like
+    pane at launch - see ``iterm.py``'s ``_launch_pane``), exactly like
     ``handoff.py``. Exits non-zero with a message on stderr if run outside a
     claudespace pane or if the target role is unrecognized/unreachable, so a
     role invoking this via Bash gets clear feedback rather than a silent

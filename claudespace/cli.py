@@ -7,13 +7,23 @@ import functools
 import logging
 import os
 import sys
+from typing import TYPE_CHECKING
 
-import iterm2
-
-from claudespace import environment, update, utils, watchdog, workspace
+from claudespace import (
+    assets_sync,
+    connect,
+    environment,
+    update,
+    utils,
+    watchdog,
+    workspace,
+)
 from claudespace.config import DEFAULT_TEMPLATE, get_template, list_templates
 from claudespace.iterm import DEFAULT_MAX_ITEMS
 from claudespace.watchdog import DEFAULT_INTERVAL_SECONDS, DEFAULT_STALL_AFTER_SECONDS
+
+if TYPE_CHECKING:
+    import iterm2
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +38,34 @@ def _build_parser() -> argparse.ArgumentParser:
         "update",
         help="Pull the latest claudespace from git, reinstall via pipx, "
         "and resync bundled commands/prompts.",
+    )
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Check and repair everything claudespace needs: the claude CLI, "
+        "iTerm2, and iTerm2's Python API. Run automatically by install.sh so "
+        "the one-time setup happens at install time rather than partway "
+        "through your first real run.",
+    )
+    doctor_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Don't prompt before installing iTerm2 via Homebrew. Required "
+        "when running non-interactively.",
+    )
+    doctor_parser.add_argument(
+        "--no-launch",
+        dest="launch",
+        action="store_false",
+        help="Don't start iTerm2 to verify its Python API came up. Used at "
+        "install time, where launching the app is unwanted.",
+    )
+    subparsers.add_parser(
+        "uninstall",
+        help="Remove claudespace's global Stop hook and its bundled "
+        "commands/prompts. Leaves your templates.toml alone. Run this before "
+        "'pipx uninstall claudespace', otherwise the Stop hook is left "
+        "pointing at a command that no longer exists and fails on every turn "
+        "of every Claude Code session on this machine.",
     )
     watchdog_parser = subparsers.add_parser(
         "watchdog",
@@ -122,7 +160,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(
-    connection: iterm2.Connection,
+    connection: "iterm2.Connection",
     *,
     root: str,
     template: str,
@@ -147,7 +185,7 @@ async def _run(
 
 
 async def _run_watchdog(
-    connection: iterm2.Connection, *, root: str, interval: float, stall_after: float
+    connection: "iterm2.Connection", *, root: str, interval: float, stall_after: float
 ) -> None:
     # No per-window instance UUID is available from a bare `claudespace
     # watchdog` invocation (that's only ever minted at `build_workspace`
@@ -175,13 +213,27 @@ def main() -> None:
         update.run_update()
         return
 
+    if args.command == "doctor":
+        ok = environment.check_environment(
+            iterm_was_running=utils.is_iterm_running(),
+            assume_yes=args.yes,
+            launch=args.launch,
+        )
+        if ok:
+            logger.info("claudespace is ready. Run 'claudespace' in any project folder.")
+        sys.exit(0 if ok else 1)
+
+    if args.command == "uninstall":
+        assets_sync.uninstall()
+        return
+
     if args.command == "watchdog":
         environment.ensure_environment(iterm_was_running=utils.is_iterm_running())
         runner = functools.partial(
             _run_watchdog, root=args.root, interval=args.interval, stall_after=args.stall_after
         )
         try:
-            iterm2.run_until_complete(runner, retry=True)
+            connect.run(runner)
         except KeyboardInterrupt:
             return
         except Exception:
@@ -219,7 +271,7 @@ def main() -> None:
         just_launched_iterm=not iterm_was_running,
     )
     try:
-        iterm2.run_until_complete(runner, retry=True)
+        connect.run(runner)
     except Exception:
         logger.exception("Failed to build workspace for '%s'", args.root)
         sys.exit(1)

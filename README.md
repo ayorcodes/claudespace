@@ -40,12 +40,14 @@ so the persona lives on the pane's process rather than in its conversation
 - it's resent on every request and survives `/new`/`/clear` with nothing to
 re-read. Pipeline handoffs into such a pane send plain continuation text
 with no slash command at all. This applies automatically to any pane whose
-role has a prompt file, regardless of what launches it: claudespace's own
-`claudespace-<role>` console scripts (which add the flag themselves, see
-`roles.py`), or a custom command from your own template
-(`~/.config/claudespace/templates.toml`) - claudespace appends the flag to
-that command too before typing it into the pane (see `iterm.py`'s
-`_command_with_baked_persona`). The one thing that opts a pane out is a
+role has a prompt file, regardless of what launches it - the built-in
+`claude` commands and a custom command from your own template
+(`~/.config/claudespace/templates.toml`) alike. claudespace appends the flag
+to whatever the pane's command is before typing it in (see `iterm.py`'s
+`_command_with_baked_persona`), so your template must not set it itself.
+Because the persona is already in the system prompt, panes are launched with
+no slash-command prefill at all - typing `/researcher` would only make the
+model read a file it has already been given. The one thing that opts a pane out is a
 role name with no matching prompt file (an unrecognized custom role) -
 that pane falls back to the slash command (`/researcher`, `/planner`,
 `/principal`, `/implementer`, `/reviewer`, `/conductor`) re-reading a
@@ -183,14 +185,13 @@ tool possible without swapping out the terminal entirely.
 ## Requirements
 
 - macOS
-- Python 3.12+
-- [Claude Code](https://claude.com/claude-code) CLI, installed and on
-  `PATH` (not installed automatically — see
-  [claude.com/claude-code](https://claude.com/claude-code))
+- [Claude Code](https://claude.com/claude-code) CLI, installed, logged in,
+  and on `PATH` (not installed automatically — it needs your login)
 
-iTerm2 itself does **not** need to be pre-installed, and its Python API does
-**not** need to be manually enabled — `claudespace` checks for both on
-startup and handles them for you (see below).
+Python 3.12+ and iTerm2 are handled for you: `install.sh` finds a suitable
+Python (installing one via Homebrew if it has to), and installs iTerm2 and
+enables its Python API as part of the install rather than partway through
+your first run. Re-check any of it at any time with `claudespace doctor`.
 
 ## Install
 
@@ -198,19 +199,24 @@ startup and handles them for you (see below).
 curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.sh | sh
 ```
 
-This installs [pipx](https://pipx.pypa.io) (via Homebrew) if you don't have
-it, then installs claudespace through it in an isolated environment, along
-with five small console-scripts (`claudespace-principal`,
-`claudespace-implementer`, `claudespace-reviewer`, `claudespace-planner`,
-`claudespace-researcher`) that each just launch `claude` pinned to a model
-and effort level - no shell config required.
+The installer, in order: finds (or installs) Python 3.12+, installs
+[pipx](https://pipx.pypa.io), installs claudespace into an isolated
+environment, registers the bundled commands/prompts, then runs
+`claudespace doctor` to sort out iTerm2 and its Python API. It finishes by
+checking `claudespace` is actually on your `PATH` in a new shell, and tells
+you exactly what to add if it isn't.
+
+Each role runs `claude` pinned to a model and effort level. Those defaults
+live in your `~/.config/claudespace/templates.toml`, so you can change any
+of them without reinstalling:
 
 | role        | model           | effort |
 |-------------|-----------------|--------|
-| principal   | claude-opus-4-8 | medium |
+| conductor   | claude-opus-5   | medium |
+| principal   | claude-opus-5   | medium |
+| planner     | claude-opus-5   | medium |
 | implementer | claude-sonnet-5 | medium |
 | reviewer    | claude-sonnet-5 | medium |
-| planner     | claude-opus-4-8 | medium |
 | researcher  | claude-sonnet-5 | low    |
 
 ### Bundled commands and prompts
@@ -238,18 +244,36 @@ Pulls the latest claudespace from git into a temporary clone, reinstalls it
 through pipx, and resyncs bundled commands/prompts - the same thing
 `install.sh` does for a fresh install, minus the pipx/iTerm2 setup checks.
 
-### First-run setup
+### Setup checks (`claudespace doctor`)
 
-On first run, `claudespace`:
+`install.sh` runs this for you; run it yourself any time something looks
+wrong. It:
 
-1. Checks the `claude` CLI is on `PATH` — exits with a link if not (this one
-   it can't install for you, since it needs your login).
-2. Checks iTerm2.app is installed — if not, and [Homebrew](https://brew.sh)
-   is available, offers to run `brew install --cask iterm2` for you. Without
-   Homebrew, it prints the manual download link instead.
+1. Checks the `claude` CLI is on `PATH` — this one it can't install for
+   you, since it needs your login.
+2. Checks iTerm2.app is installed (including copies outside
+   `/Applications`) — if not, and [Homebrew](https://brew.sh) is available,
+   installs it. Without Homebrew, prints the manual download link.
 3. Checks iTerm2's "Enable Python API" preference — if off, enables it via
-   `defaults write` automatically. If iTerm2 was already running, you'll be
-   asked to restart it once so the change takes effect.
+   `defaults write`, then starts iTerm2 and waits for the API to actually
+   come up, so you don't have to run anything a second time.
+
+The one case that still needs you is iTerm2 already running when the
+preference changes: it has to be restarted before the API is available.
+If iTerm2 loads preferences from a custom folder, `doctor` says so and
+points you at the GUI toggle instead of writing a setting iTerm2 ignores.
+
+### Uninstalling
+
+```
+claudespace uninstall && pipx uninstall claudespace
+```
+
+Run `claudespace uninstall` **first**. It removes the global `Stop` hook
+from `~/.claude/settings.json` and the bundled commands/prompts. Skipping it
+leaves a hook pointing at a command that no longer exists, which then fails
+on every turn of every Claude Code session on the machine. Your
+`~/.config/claudespace/templates.toml` is left alone.
 
 ## Usage
 
@@ -427,30 +451,32 @@ layout = "main_left_grid_right"
 
 [[templates.max.panes]]
 role = "principal"
-command = "claude2 --model claude-opus-4-8 --effort medium"
+command = "claude --model claude-opus-5 --effort high"
 
 [[templates.max.panes]]
 role = "implementer"
-command = "claudespace-implementer"
+command = "claude --model claude-sonnet-5 --effort medium --permission-mode auto"
 
 [[templates.max.panes]]
 role = "reviewer"
-command = "claudespace-reviewer"
+command = "claude --model claude-sonnet-5 --effort medium --permission-mode auto"
 
 [[templates.max.panes]]
 role = "planner"
-command = "claude2 --model claude-opus-4-8 --effort medium"
+command = "claude --model claude-opus-5 --effort high"
 
 [[templates.max.panes]]
 role = "researcher"
-command = "claudespace-researcher"
+command = "claude --model claude-sonnet-5 --effort low --permission-mode auto"
 ```
 
 Each pane's `role` must match one of the roles the chosen layout produces
 (`main_left_grid_right` needs exactly `principal`, `implementer`,
 `reviewer`, `planner`, `researcher`). `command` is any shell command the
-pane runs on open - a `claudespace-` console-script, `claude` with your own
-flags, or something else entirely.
+pane runs on open - `claude` with your own flags, a wrapper around a
+different model or CLI, or something else entirely. claudespace appends
+`--append-system-prompt-file` for the pane's role automatically, so the
+command should not set it itself.
 
 Run it with `claudespace --template max`; see all available templates
 (built-in and user-defined) with `claudespace --list-templates`. A user
