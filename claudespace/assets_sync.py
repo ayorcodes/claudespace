@@ -50,6 +50,11 @@ SETTINGS_DEST = DEFAULT_CONFIG_DIR / "settings.json"
 HANDOFF_HOOK_COMMAND = "claudespace-handoff"
 LEGACY_HANDOFF_HOOK_COMMAND = "claudespace:handoff"
 
+# PreToolUse guard that stops a read-only role writing to code (see guard.py).
+# Matched against the write tools only, so it never runs for a Read or Bash.
+GUARD_HOOK_COMMAND = "claudespace-guard"
+GUARD_HOOK_MATCHER = "Edit|Write|NotebookEdit|MultiEdit"
+
 
 def claude_config_dirs() -> list[Path]:
     """Every Claude Code config home to install the hook and commands into.
@@ -213,6 +218,49 @@ def _install_handoff_hook(settings_path: Path) -> bool:
     return True
 
 
+def _install_guard_hook(settings_path: Path) -> bool:
+    """Add the PreToolUse guard hook, matched to the write tools only.
+
+    Idempotent, and merged into whatever hooks already exist. Like the Stop
+    hook it is installed globally: ``guard.py`` exits silently unless
+    ``CLAUDESPACE_ROLE`` names a restricted role, so it costs an unrelated
+    session nothing.
+    """
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings = _read_settings(settings_path)
+    pre_hooks = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
+
+    for entry in pre_hooks:
+        for hook in entry.get("hooks", []):
+            if hook.get("command") == GUARD_HOOK_COMMAND:
+                return False
+
+    pre_hooks.append(
+        {
+            "matcher": GUARD_HOOK_MATCHER,
+            "hooks": [{"type": "command", "command": GUARD_HOOK_COMMAND}],
+        }
+    )
+    _write_settings(settings_path, settings)
+    return True
+
+
+def remove_guard_hook(settings_path: Path) -> bool:
+    """Drop the PreToolUse guard hook from ``settings_path``."""
+    if not settings_path.exists():
+        return False
+    settings = _read_settings(settings_path)
+    pre_hooks = settings.get("hooks", {}).get("PreToolUse", [])
+    if not pre_hooks or not _remove_hook_command(pre_hooks, GUARD_HOOK_COMMAND):
+        return False
+    if not pre_hooks:
+        settings["hooks"].pop("PreToolUse", None)
+    if not settings.get("hooks"):
+        settings.pop("hooks", None)
+    _write_settings(settings_path, settings)
+    return True
+
+
 def remove_handoff_hook(settings_path: Path) -> bool:
     """Drop claudespace's Stop hook from ``~/.claude/settings.json``.
 
@@ -273,6 +321,9 @@ def uninstall() -> None:
         if remove_handoff_hook(config_dir / "settings.json"):
             hooks_removed += 1
             logger.info("Removed the handoff Stop hook from %s", config_dir)
+        if remove_guard_hook(config_dir / "settings.json"):
+            hooks_removed += 1
+            logger.info("Removed the read-only guard hook from %s", config_dir)
         removed_files += _remove_bundled("commands", config_dir / "commands")
 
     removed_files += _remove_bundled("prompts", PROMPTS_DEST)
@@ -298,6 +349,8 @@ def sync_assets() -> None:
         commands_copied += _copy_all(assets.joinpath("commands"), config_dir / "commands")
         if _install_handoff_hook(config_dir / "settings.json"):
             logger.info("Installed the handoff Stop hook in %s", config_dir)
+        if _install_guard_hook(config_dir / "settings.json"):
+            logger.info("Installed the read-only guard hook in %s", config_dir)
 
     prompts_copied = _copy_all(assets.joinpath("prompts"), PROMPTS_DEST)
     commands_migrated = migrate_role_commands()

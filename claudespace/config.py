@@ -85,6 +85,24 @@ ROLE_COMMANDS: dict[str, str] = {
     "researcher": "claude --model claude-sonnet-5 --effort low --permission-mode auto",
 }
 
+# Roles whose prompts forbid them from touching code, enforced by the
+# PreToolUse guard hook (see ``guard.py``) rather than by their prompt alone.
+#
+# Telling a role "you do not implement" is a request, not a boundary: a
+# researcher pane was observed rewriting a component mid-investigation,
+# because editing is the obvious way to act on what it just found and every
+# pane runs with ``--permission-mode auto``, so nothing prompted first.
+#
+# ``--disallowed-tools Edit`` does not solve this - the model simply reaches
+# for ``Write`` instead, which overwrites an existing file just as well - and
+# denying ``Write`` too would stop these roles persisting the one artifact
+# each of them exists to produce. The distinction that actually matters is
+# *what* is being written, not *which tool* writes it, so the guard hook
+# filters by path instead.
+READ_ONLY_ROLES: frozenset[str] = frozenset(
+    {"researcher", "planner", "principal", "reviewer"}
+)
+
 _NATIVE_ROLES = ("principal", "implementer", "reviewer", "planner", "researcher")
 _AGENTIC_ROLES = ("conductor",) + _NATIVE_ROLES
 

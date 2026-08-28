@@ -18,6 +18,7 @@ classifiers = [
 claudespace = "claudespace.cli:main"
 "claudespace-sync-assets" = "claudespace.assets_sync:main"
 "claudespace-handoff" = "claudespace.handoff:main"
+"claudespace-guard" = "claudespace.guard:main"
 "claudespace-msg" = "claudespace.messaging:main"
 "claudespace-update" = "claudespace.update:main"
 
