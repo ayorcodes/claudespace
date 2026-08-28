@@ -1,9 +1,10 @@
 # claudespace
 
-Open a full Claude Code workspace in iTerm2 with one command: a `principal`,
-`implementer`, `reviewer`, `planner`, and `researcher` pane, each pinned to
-a different model and effort level. Re-running against the same folder
-attaches to the existing window instead of creating a duplicate.
+A five-role software delivery pipeline in one iTerm2 window: `researcher` →
+`planner` → `principal` → `implementer` → `reviewer`, each running as its own
+Claude Code session with its own model, its own system prompt, and a narrow
+mandate it can't step outside of. They hand work to each other automatically,
+on disk - no copy-pasting context between panes.
 
 ```
 ┌────────────┬──────────────┬──────────────┐
@@ -13,51 +14,178 @@ attaches to the existing window instead of creating a duplicate.
 └────────────┴──────────────┴──────────────┘
 ```
 
-claudespace isn't just a window layout - it's a five-role software delivery
-pipeline (researcher → planner → principal → implementer → reviewer), each
-role running as its own Claude Code session with its own model, its own
-system prompt, and a narrow mandate it isn't allowed to step outside of. The
-roles hand work to each other automatically, on disk, through small marker
-files a Stop hook watches for - no copy-pasting context between panes.
+## Install
+
+```
+curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.sh | sh
+```
+
+**You need macOS** and the [Claude Code](https://claude.com/claude-code) CLI,
+installed and logged in. That's it - Python 3.12+, [pipx](https://pipx.pypa.io),
+and iTerm2 are found or installed for you, and iTerm2's Python API is enabled
+as part of the install.
+
+If `claudespace` isn't found afterwards, open a new terminal - the installer
+adds it to your `PATH`, which only takes effect in a new shell. It tells you
+exactly what to add if that didn't work.
+
+## Use it
+
+Two steps.
+
+**1. Open a workspace in your project:**
+
+```
+cd ~/your-project
+claudespace
+```
+
+**2. Describe what you want, in the `researcher` pane** (bottom right):
+
+```
+/researcher add rate limiting to the /api/upload endpoint
+```
+
+That's the whole workflow. Researcher investigates your codebase, decides how
+far the request needs to travel, and hands off automatically - to `planner` if
+there are open product questions, straight to `principal` for a well-scoped
+engineering change, or straight to `implementer` if it's trivial. Work flows
+to `reviewer`, which reports **PASS** or **CHANGES REQUIRED** back to you.
+
+**Always start in `researcher`**, even for a change you think is trivial - it
+is the one role allowed to read the repository first, and deciding how far the
+work needs to go is part of its job. Every other pane gets its work handed to
+it. (The exception is a whole backlog of features at once - see
+[Unattended multi-feature runs](#unattended-multi-feature-runs-agentic-template).)
+
+Re-running `claudespace` in the same folder reattaches to the existing window
+rather than opening a duplicate.
+
+### Which pane is which?
+
+Each pane carries its role name as a translucent **badge in its top-right
+corner**, and its own color. The badge is drawn over Claude Code's interface,
+so it stays readable no matter what the pane is doing:
+
+| role | color | |
+|---|---|---|
+| `conductor` | violet | drives a whole backlog (only in the `agentic` template) |
+| `principal` | slate blue | designs how to build it |
+| `planner` | amber | decides what to build |
+| `researcher` | teal | investigates the code - **start here** |
+| `implementer` | green | writes the code |
+| `reviewer` | rose | checks the work |
+
+The role name is also set as the session name inside Claude Code, so it shows
+in the prompt box and the terminal title.
+
+## Everyday commands
+
+```
+claudespace                      # build or attach to a workspace here
+claudespace --root ~/proj        # ... for a specific folder
+claudespace --new                # force a new window even if one exists
+claudespace --template agentic   # unattended multi-feature run
+claudespace --list-templates     # show available templates
+
+claudespace --manual             # don't auto-submit handoffs; you press enter
+claudespace --think              # autonomous: roles decide open questions themselves
+claudespace --lazy               # start with one pane; others appear as work reaches them
+```
+
+**The combination worth knowing:**
+
+```
+claudespace --lazy --new --think
+```
+
+A fresh window (`--new`), starting as a single `researcher` pane rather than a
+six-way split (`--lazy`) - each further pane splits into existence only when
+work actually reaches it, so you're never looking at five idle terminals. And
+`--think` means nothing stops to ask you a question: roles that would normally
+pause decide for themselves and write the decision down, so you can start it
+and walk away. Give it a task and come back to a review.
+
+Maintenance:
+
+```
+claudespace doctor               # check/repair iTerm2, its Python API, and the claude CLI
+claudespace update               # pull the latest version and resync prompts
+claudespace uninstall            # run this BEFORE `pipx uninstall claudespace`
+```
+
+Something not working? Run `claudespace doctor` first - it re-checks and
+repairs everything the installer set up.
+
+Add `.claudespace/` to your project's `.gitignore` - it's pipeline scratch
+state, not something to commit.
+
+---
+
+Everything below is reference: how the pipeline actually works, and how to
+change it.
 
 ## Table of contents
 
 - [How it works](#how-it-works)
-- [Where do I start?](#where-do-i-start)
-- [Platform support](#platform-support)
-- [Requirements](#requirements)
-- [Install](#install)
-- [Usage](#usage)
+- [Choosing where to start](#choosing-where-to-start)
 - [Pipeline handoff](#pipeline-handoff)
 - [Unattended multi-feature runs (`agentic` template)](#unattended-multi-feature-runs-agentic-template)
 - [Adding your own template](#adding-your-own-template)
+- [Install details](#install-details)
 
 ## How it works
 
-Every role's pane is launched with its prompt from `claudespace/assets/prompts/`
-already baked into its system prompt (via `--append-system-prompt-file`),
-so the persona lives on the pane's process rather than in its conversation
-- it's resent on every request and survives `/new`/`/clear` with nothing to
-re-read. Pipeline handoffs into such a pane send plain continuation text
-with no slash command at all. This applies automatically to any pane whose
-role has a prompt file, regardless of what launches it: claudespace's own
-`claudespace-<role>` console scripts (which add the flag themselves, see
-`roles.py`), or a custom command from your own template
-(`~/.config/claudespace/templates.toml`) - claudespace appends the flag to
-that command too before typing it into the pane (see `iterm.py`'s
-`_command_with_baked_persona`). The one thing that opts a pane out is a
-role name with no matching prompt file (an unrecognized custom role) -
-that pane falls back to the slash command (`/researcher`, `/planner`,
-`/principal`, `/implementer`, `/reviewer`, `/conductor`) re-reading a
-prompt file each handoff, same as before this feature existed. Note that a
-custom command isn't guaranteed to actually be `claude` under a different
-name - if it doesn't forward the appended flag through, or errors on an
-unrecognized flag, that pane just fails to reach claude's ready prompt at
-launch (a visible, debuggable error in that one pane, not silent
-breakage - see `_wait_for_claude_prompt`). The matching slash command is
-always how a human kicks off the first task in any pane. Each role reads
-only the artifacts it needs, produces exactly one artifact of its own, and
-stops - it never reaches forward or backward into another role's job.
+### Each pane is its own Claude Code session
+
+Not one Claude switching hats - six separate `claude` processes, each with its
+own conversation, its own model, and its own system prompt. A role literally
+cannot see another role's conversation, which is the point: `implementer`
+can't quietly redesign the thing, and `reviewer` can't grade its own homework.
+
+Each role's prompt is baked into its session at launch with
+`--append-system-prompt-file`, so the role lives on the process rather than in
+the conversation. It survives `/clear`, and it costs nothing to "remind" a
+pane what it is.
+
+### Work moves between panes as files, not text
+
+This is the part that makes it a pipeline rather than six terminals.
+
+When a role finishes, it does two things:
+
+1. **Writes its real artifact** wherever your project keeps documents -
+   `docs/research/`, `docs/design/`, whatever your `CLAUDE.md` says.
+   claudespace never invents a parallel copy.
+2. **Writes a marker file** at `.claudespace/<role>.done`, whose entire
+   contents are the path to that artifact.
+
+A Stop hook (`claudespace-handoff`, installed globally into
+`~/.claude/settings.json`) fires whenever any Claude Code session finishes a
+turn. It notices the fresh marker, looks up who is next in `pipeline.py`, and
+types a message into that pane - "read `docs/research/x.md` from researcher
+and continue" - then presses enter for you.
+
+```
+researcher ──writes──▶ docs/research/rate-limiting.md
+           └─writes──▶ .claudespace/researcher.done   ("docs/research/rate-limiting.md")
+                                │
+                    Stop hook sees it
+                                ▼
+              types into the planner pane, submits
+```
+
+So the handoff is a real file on disk plus a keystroke into a real terminal.
+Nothing is held in memory, nothing is piped, and you can read every artifact
+yourself at any point. If a pane is closed, the marker still sits there.
+
+A role that gets stuck writes `.claudespace/<role>.blocked` instead, and the
+same hook routes it *backwards* - see [Pipeline handoff](#pipeline-handoff).
+
+### Each role has a narrow mandate
+
+Each reads only the artifacts it needs, produces exactly one artifact, and
+stops. It never reaches forward or backward into another role's job.
 
 | role | question it answers | reads | produces | never does |
 |---|---|---|---|---|
@@ -67,12 +195,21 @@ stops - it never reaches forward or backward into another role's job.
 | **implementer** | Build it. | Implementation Design | working code, tests, an implementation report | redesign, add unrelated scope |
 | **reviewer** | Is it actually done and correct? | Implementation Design + the diff | a review with a PASS / CHANGES REQUIRED verdict | fix issues itself, invent new requirements |
 
-Each artifact is a real file, persisted to wherever your project's own
-documentation conventions say it should live (`docs/research/`,
-`docs/design/`, or whatever `CLAUDE.md` specifies) - `claudespace` never
-invents a parallel copy. The only thing living under `.claudespace/` is
-small routing state: `<role>.done` / `<role>.blocked` marker files whose
-*content* is the path to the real artifact.
+### Custom commands and unknown roles
+
+claudespace appends `--append-system-prompt-file` and `--name` to whatever a
+pane's command is before typing it in (see `iterm.py`'s
+`_command_with_baked_persona`), so a template must not set those itself. That
+applies to a custom command from your own `templates.toml` too - a wrapper
+around a different model or CLI. Such a wrapper isn't guaranteed to be
+`claude` under another name; if it doesn't forward the appended flags, that
+pane just fails to reach claude's ready prompt at launch, which is a visible
+error in that one pane rather than silent breakage.
+
+A role with no matching prompt file (an unrecognized custom role) falls back
+to being prefilled with its slash command - `/researcher`, `/planner`,
+`/principal`, `/implementer`, `/reviewer`, `/conductor` - which re-reads a
+prompt file on each handoff.
 
 ### How the roles talk to each other
 
@@ -130,7 +267,8 @@ loop back around:
   rather than architectural. Whoever answers routes back to *whoever
   asked* - not forward along the fixed pipeline - so an answered question
   resumes exactly where it was asked.
-- **Conductor** (optional sixth role, see below) sits outside this chain
+- **Conductor** (optional sixth role, see [Unattended multi-feature
+  runs](#unattended-multi-feature-runs-agentic-template)) sits outside this chain
   entirely - it only decomposes a goal into a backlog and dispatches one
   item at a time into the same researcher-first pipeline, picking up the
   next item automatically on every reviewer PASS.
@@ -139,28 +277,18 @@ All of this routing is driven by a single Stop hook
 (`claudespace-handoff`) reading `pipeline.py`'s map of "who talks to whom" -
 see [Pipeline handoff](#pipeline-handoff) for the mechanics.
 
-## Where do I start?
+## Choosing where to start
 
 **Start at `/researcher`, always** - even for a change you think is
 trivial. Researcher is the one role allowed to read the repository before
 anything else happens, and its job includes deciding how far the request
-needs to travel through the rest of the pipeline:
-
-```
-claudespace                      # open the workspace (see Usage below)
-```
-
-Then, in the **researcher** pane:
-
-```
-/researcher add rate limiting to the /api/upload endpoint
-```
+needs to travel through the rest of the pipeline.
 
 From there:
 
 - If it's a genuine product-facing feature with open scope questions,
   researcher hands off to **planner** - work through the pipeline pane by
-  pane (or leave auto-handoff on, the default, see below, and mostly watch).
+  pane (or leave auto-handoff on, the default, and mostly watch).
 - If it's a well-scoped engineering change with no product ambiguity
   (a refactor, a dependency bump, an infra tweak), researcher skips
   straight to **principal**.
@@ -173,95 +301,6 @@ right place. The only pane you invoke directly for a *new* request is
 researcher (or `/conductor`, for a whole backlog of them - see
 [Unattended multi-feature runs](#unattended-multi-feature-runs-agentic-template)).
 Every other pane gets its work handed to it automatically.
-
-## Platform support
-
-**macOS only.** claudespace drives iTerm2's official Python API, which has
-no Windows or Linux equivalent — there is no cross-platform version of this
-tool possible without swapping out the terminal entirely.
-
-## Requirements
-
-- macOS
-- Python 3.12+
-- [Claude Code](https://claude.com/claude-code) CLI, installed and on
-  `PATH` (not installed automatically — see
-  [claude.com/claude-code](https://claude.com/claude-code))
-
-iTerm2 itself does **not** need to be pre-installed, and its Python API does
-**not** need to be manually enabled — `claudespace` checks for both on
-startup and handles them for you (see below).
-
-## Install
-
-```
-curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.sh | sh
-```
-
-This installs [pipx](https://pipx.pypa.io) (via Homebrew) if you don't have
-it, then installs claudespace through it in an isolated environment, along
-with five small console-scripts (`claudespace-principal`,
-`claudespace-implementer`, `claudespace-reviewer`, `claudespace-planner`,
-`claudespace-researcher`) that each just launch `claude` pinned to a model
-and effort level - no shell config required.
-
-| role        | model           | effort |
-|-------------|-----------------|--------|
-| principal   | claude-opus-4-8 | medium |
-| implementer | claude-sonnet-5 | medium |
-| reviewer    | claude-sonnet-5 | medium |
-| planner     | claude-opus-4-8 | medium |
-| researcher  | claude-sonnet-5 | low    |
-
-### Bundled commands and prompts
-
-`install.sh` also registers five global slash-commands - `/planner`,
-`/principal`, `/researcher`, `/implementer`, `/reviewer` - by copying their
-command files into `~/.claude/commands` and their prompt files into
-`~/.ai/prompts`. Any pane opened by claudespace (or any other Claude Code
-session on the machine) can use them right away. Existing files with the
-same name are always overwritten with the bundled version, so re-running
-the sync after an upgrade picks up fixes - any local edits to a prompt or
-command will be lost. Re-run the sync manually with:
-
-```
-claudespace-sync-assets
-```
-
-### Updating
-
-```
-claudespace update
-```
-
-Pulls the latest claudespace from git into a temporary clone, reinstalls it
-through pipx, and resyncs bundled commands/prompts - the same thing
-`install.sh` does for a fresh install, minus the pipx/iTerm2 setup checks.
-
-### First-run setup
-
-On first run, `claudespace`:
-
-1. Checks the `claude` CLI is on `PATH` — exits with a link if not (this one
-   it can't install for you, since it needs your login).
-2. Checks iTerm2.app is installed — if not, and [Homebrew](https://brew.sh)
-   is available, offers to run `brew install --cask iterm2` for you. Without
-   Homebrew, it prints the manual download link instead.
-3. Checks iTerm2's "Enable Python API" preference — if off, enables it via
-   `defaults write` automatically. If iTerm2 was already running, you'll be
-   asked to restart it once so the change takes effect.
-
-## Usage
-
-```
-claudespace                 # build/attach a workspace for the current directory
-claudespace --root ~/proj   # build/attach for a specific folder
-claudespace --new           # force a new window even if one exists
-claudespace --list-templates
-claudespace --template agentic   # unattended multi-feature run (auto-handoff is on by default), see below
-claudespace --manual             # disable auto-handoff: press enter to advance each handoff
-claudespace --think              # autonomous: planner decides open questions instead of asking you
-```
 
 ## Pipeline handoff
 
@@ -329,12 +368,9 @@ resolve to the same real path) no longer risk a handoff in one window being
 silently routed into a pane in the other - each hook only ever addresses
 panes in its own window.
 
-Add `.claudespace/` to your project's `.gitignore` - it's pipeline scratch
-state, not something to commit.
-
 ## Unattended multi-feature runs (`agentic` template)
 
-Everything above drives one unit of work through the pipeline per run - you
+Everything so far drives one unit of work through the pipeline per run - you
 still re-trigger it for each feature. The built-in `agentic` template adds a
 sixth pane, **conductor**, that turns a single high-level goal into a
 backlog and drives the pipeline through it automatically, one item at a
@@ -427,30 +463,32 @@ layout = "main_left_grid_right"
 
 [[templates.max.panes]]
 role = "principal"
-command = "claude2 --model claude-opus-4-8 --effort medium"
+command = "claude --model claude-opus-5 --effort high"
 
 [[templates.max.panes]]
 role = "implementer"
-command = "claudespace-implementer"
+command = "claude --model claude-sonnet-5 --effort medium --permission-mode auto"
 
 [[templates.max.panes]]
 role = "reviewer"
-command = "claudespace-reviewer"
+command = "claude --model claude-sonnet-5 --effort medium --permission-mode auto"
 
 [[templates.max.panes]]
 role = "planner"
-command = "claude2 --model claude-opus-4-8 --effort medium"
+command = "claude --model claude-opus-5 --effort high"
 
 [[templates.max.panes]]
 role = "researcher"
-command = "claudespace-researcher"
+command = "claude --model claude-sonnet-5 --effort low --permission-mode auto"
 ```
 
 Each pane's `role` must match one of the roles the chosen layout produces
 (`main_left_grid_right` needs exactly `principal`, `implementer`,
 `reviewer`, `planner`, `researcher`). `command` is any shell command the
-pane runs on open - a `claudespace-` console-script, `claude` with your own
-flags, or something else entirely.
+pane runs on open - `claude` with your own flags, a wrapper around a
+different model or CLI, or something else entirely. claudespace appends
+`--append-system-prompt-file` for the pane's role automatically, so the
+command should not set it itself.
 
 Run it with `claudespace --template max`; see all available templates
 (built-in and user-defined) with `claudespace --list-templates`. A user
@@ -459,6 +497,91 @@ template with the same name as a built-in one overrides it.
 Alternatively, add a `Template` directly in `claudespace/config.py` - it's
 immediately available via `--template <name>`, but edits there are lost on
 `claudespace update` since that reinstalls from a fresh clone.
+
+## Install details
+
+### What the installer does
+
+In order: finds (or installs) Python 3.12+, installs
+[pipx](https://pipx.pypa.io), installs claudespace into an isolated
+environment, registers the bundled commands/prompts, then runs
+`claudespace doctor` to sort out iTerm2 and its Python API. It finishes by
+checking `claudespace` is actually on your `PATH` in a new shell.
+
+Each role runs `claude` pinned to a model and effort level. Those defaults
+live in your `~/.config/claudespace/templates.toml`, so you can change any
+of them without reinstalling:
+
+| role        | model           | effort |
+|-------------|-----------------|--------|
+| conductor   | claude-opus-5   | medium |
+| principal   | claude-opus-5   | medium |
+| planner     | claude-opus-5   | medium |
+| implementer | claude-sonnet-5 | medium |
+| reviewer    | claude-sonnet-5 | medium |
+| researcher  | claude-sonnet-5 | low    |
+
+### Platform support
+
+**macOS only.** claudespace drives iTerm2's official Python API, which has
+no Windows or Linux equivalent — there is no cross-platform version of this
+tool possible without swapping out the terminal entirely.
+
+### Bundled commands and prompts
+
+`install.sh` also registers six global slash-commands - `/researcher`,
+`/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor` - by
+copying their command files into `~/.claude/commands` and their prompts into
+`~/.ai/prompts`. Any pane opened by claudespace (or any other Claude Code
+session on the machine) can use them right away. Existing files with the
+same name are always overwritten with the bundled version, so re-running
+the sync after an upgrade picks up fixes - any local edits to a prompt or
+command will be lost. Re-run the sync manually with:
+
+```
+claudespace-sync-assets
+```
+
+### Updating
+
+```
+claudespace update
+```
+
+Pulls the latest claudespace from git into a temporary clone, reinstalls it
+through pipx, and resyncs bundled commands/prompts - the same thing
+`install.sh` does for a fresh install, minus the pipx/iTerm2 setup checks.
+
+### Setup checks (`claudespace doctor`)
+
+`install.sh` runs this for you; run it yourself any time something looks
+wrong. It:
+
+1. Checks the `claude` CLI is on `PATH` — this one it can't install for
+   you, since it needs your login.
+2. Checks iTerm2.app is installed (including copies outside
+   `/Applications`) — if not, and [Homebrew](https://brew.sh) is available,
+   installs it. Without Homebrew, prints the manual download link.
+3. Checks iTerm2's "Enable Python API" preference — if off, enables it via
+   `defaults write`, then starts iTerm2 and waits for the API to actually
+   come up, so you don't have to run anything a second time.
+
+The one case that still needs you is iTerm2 already running when the
+preference changes: it has to be restarted before the API is available.
+If iTerm2 loads preferences from a custom folder, `doctor` says so and
+points you at the GUI toggle instead of writing a setting iTerm2 ignores.
+
+### Uninstalling
+
+```
+claudespace uninstall && pipx uninstall claudespace
+```
+
+Run `claudespace uninstall` **first**. It removes the global `Stop` hook
+from `~/.claude/settings.json` and the bundled commands/prompts. Skipping it
+leaves a hook pointing at a command that no longer exists, which then fails
+on every turn of every Claude Code session on the machine. Your
+`~/.config/claudespace/templates.toml` is left alone.
 
 ## License
 

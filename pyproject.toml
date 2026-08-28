@@ -16,20 +16,20 @@ classifiers = [
 
 [project.scripts]
 claudespace = "claudespace.cli:main"
-"claudespace-principal" = "claudespace.roles:principal"
-"claudespace-planner" = "claudespace.roles:planner"
-"claudespace-implementer" = "claudespace.roles:implementer"
-"claudespace-reviewer" = "claudespace.roles:reviewer"
-"claudespace-researcher" = "claudespace.roles:researcher"
-"claudespace-conductor" = "claudespace.roles:conductor"
 "claudespace-sync-assets" = "claudespace.assets_sync:main"
 "claudespace-handoff" = "claudespace.handoff:main"
 "claudespace-msg" = "claudespace.messaging:main"
 "claudespace-update" = "claudespace.update:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["claudespace*"]

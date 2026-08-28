@@ -47,7 +47,19 @@ def run_update() -> None:
             sys.exit(1)
 
         logger.info("Installing claudespace from %s...", tmp_dir)
-        install = subprocess.run(["pipx", "install", "--force", tmp_dir])
+        # Uninstall first rather than `pipx install --force`: pipx ignores
+        # `--python` when forcing into an existing venv, and reusing that
+        # venv strands console scripts a newer version no longer declares.
+        # Pinning to sys.executable keeps the update on the interpreter this
+        # install already runs under.
+        subprocess.run(
+            ["pipx", "uninstall", "claudespace"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        install = subprocess.run(
+            ["pipx", "install", "--python", sys.executable, tmp_dir]
+        )
         if install.returncode != 0:
             logger.error("pipx install failed - see output above.")
             sys.exit(1)
