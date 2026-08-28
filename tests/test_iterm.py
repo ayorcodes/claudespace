@@ -147,11 +147,34 @@ def test_every_pipeline_role_has_a_theme():
     assert set(PIPELINE) <= set(ROLE_THEMES), sorted(set(PIPELINE) - set(ROLE_THEMES))
 
 
-def test_role_profile_carries_a_badge():
-    # The badge is the one role label that survives Claude Code's TUI, so a
-    # role losing it means an unidentifiable pane.
+def test_role_profile_tints_the_title_bar_in_both_appearances():
+    # The pane's title bar (already showing "<role> (claude)" via --name) is
+    # the role label. The generic "Use Tab Color" applies only when separate
+    # light/dark colors are disabled, so setting it alone left every title bar
+    # the same color in dark mode - all three variants have to be set.
     from claudespace.themes import build_role_profile
 
     values = build_role_profile("researcher").values
-    assert values["Badge Text"] == '"RESEARCHER"'
-    assert "Badge Color" in values
+    for key in ("Tab Color", "Tab Color (Light)", "Tab Color (Dark)"):
+        assert key in values, key
+    for key in ("Use Tab Color", "Use Tab Color (Light)", "Use Tab Color (Dark)"):
+        assert values[key] == "true", key
+
+
+def test_roles_are_visually_distinguishable():
+    # Two roles sharing an accent would give their panes the same title bar.
+    from claudespace.themes import ROLE_THEMES
+
+    accents = [
+        (t.accent.red, t.accent.green, t.accent.blue) for t in ROLE_THEMES.values()
+    ]
+    assert len(set(accents)) == len(accents)
+
+
+def test_no_badge_is_set():
+    # A badge is drawn over the pane at a fixed size, so in a split it wrapped
+    # mid-word ("PRINCI PAL"). The title bar already carries the name.
+    from claudespace.themes import build_role_profile
+
+    values = build_role_profile("researcher").values
+    assert not any("Badge" in k for k in values)

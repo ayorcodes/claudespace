@@ -63,9 +63,9 @@ rather than opening a duplicate.
 
 ### Which pane is which?
 
-Each pane carries its role name as a translucent **badge in its top-right
-corner**, and its own color. The badge is drawn over Claude Code's interface,
-so it stays readable no matter what the pane is doing:
+Each pane's **title bar** shows its role - `researcher (claude)`,
+`implementer (claude)` - and is tinted with that role's own color, so you can
+tell them apart at a glance without reading anything:
 
 | role | color | |
 |---|---|---|
@@ -76,8 +76,9 @@ so it stays readable no matter what the pane is doing:
 | `implementer` | green | writes the code |
 | `reviewer` | rose | checks the work |
 
-The role name is also set as the session name inside Claude Code, so it shows
-in the prompt box and the terminal title.
+The name comes from `claude --name <role>`, so it also appears in Claude
+Code's own prompt box. If your panes don't show a title bar, turn it on in
+iTerm2: Settings > Appearance > Panes > "Show per-pane title bar".
 
 ## Everyday commands
 
