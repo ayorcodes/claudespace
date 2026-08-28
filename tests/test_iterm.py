@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from claudespace import iterm
 
 
@@ -113,13 +115,14 @@ class TestRolePromptPrefix:
 class TestCommandWithBakedPersona:
     def test_appends_the_prompt_file_and_the_session_name(self, tmp_path, monkeypatch):
         monkeypatch.setattr(iterm, "PROMPTS_DEST", tmp_path)
-        prompt = tmp_path / "reviewer.prompt.md"
+        prompt = tmp_path / "implementer.prompt.md"
         prompt.write_text("persona")
-        command = iterm._command_with_baked_persona("reviewer", "claude --model x")
+        # implementer denies no tools, so this is the full command shape.
         # --name is what labels the pane inside Claude Code's own TUI, now
-        # that panes are no longer prefilled with `/reviewer`.
+        # that panes are no longer prefilled with `/implementer`.
+        command = iterm._command_with_baked_persona("implementer", "claude --model x")
         assert command == (
-            f"claude --model x --append-system-prompt-file {prompt} --name reviewer"
+            f"claude --model x --append-system-prompt-file {prompt} --name implementer"
         )
 
     def test_quotes_a_path_containing_spaces(self, tmp_path, monkeypatch):
