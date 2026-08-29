@@ -44,6 +44,7 @@ be. That works even in a template with no conductor pane; see
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 MARKER_DIR = ".claudespace"
@@ -163,12 +164,51 @@ def parse_blocked_marker(content: str, *, stage: Stage) -> tuple[str | None, str
     return None, _normalize_artifact(content)
 
 
+def worktree_marker_path(root: str) -> str:
+    """Sentinel a role writes when it creates a run-scoped git worktree.
+
+    Content is the worktree's absolute path. Every prompt is told (see each
+    ``*.prompt.md``'s "Worktree" section) to check this file first and
+    ``cd`` into its contents before doing anything else, so ``resolve_root``
+    below is what makes the rest of the pipeline's path handling honor that
+    without every caller re-checking it by hand.
+    """
+    return f"{root.rstrip('/')}/{MARKER_DIR}/worktree"
+
+
+def resolve_root(root: str) -> str:
+    """The effective project root for ``root``'s workspace: the contents of
+    its ``worktree`` marker if one exists and still points at a real
+    directory, else ``root`` unchanged.
+
+    ``CLAUDESPACE_ROOT`` (what every pane's env var and every caller in this
+    module is handed) is fixed at workspace-creation time and never changes
+    for the life of the workspace - but a role can be told mid-run to do its
+    work in a freshly created git worktree (see the "Worktree" section now
+    in every ``*.prompt.md``), which lives at a different path on disk.
+    Without this indirection, a role that ``cd``'d into that worktree writes
+    its markers and artifacts there while every path this module builds
+    still points at the original ``CLAUDESPACE_ROOT`` - the exact drift that
+    left a downstream role unable to find a researcher's brief after a
+    worktree-scoped run (docs/research/2026-08-29-vat-exclusion...). Routing
+    every marker-path builder through this function means a worktree, once
+    recorded, is honored everywhere without each caller re-checking it.
+    """
+    pointer = worktree_marker_path(root)
+    if os.path.isfile(pointer):
+        with open(pointer) as f:
+            candidate = f.read().strip()
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return root
+
+
 def done_marker_path(root: str, role: str) -> str:
-    return f"{root.rstrip('/')}/{MARKER_DIR}/{role}.done"
+    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/{role}.done"
 
 
 def blocked_marker_path(root: str, role: str) -> str:
-    return f"{root.rstrip('/')}/{MARKER_DIR}/{role}.blocked"
+    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/{role}.blocked"
 
 
 def conductor_run_marker_path(root: str) -> str:
@@ -180,7 +220,7 @@ def conductor_run_marker_path(root: str) -> str:
     from, read back on a goal-less invocation so it knows which file to
     resume. ``handoff.py`` only ever checks presence.
     """
-    return f"{root.rstrip('/')}/{MARKER_DIR}/conductor-run"
+    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/conductor-run"
 
 
 def think_marker_path(root: str) -> str:
@@ -190,7 +230,7 @@ def think_marker_path(root: str) -> str:
     decide themselves and record the decision in their artifact. Only
     presence is checked.
     """
-    return f"{root.rstrip('/')}/{MARKER_DIR}/think"
+    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/think"
 
 
 # Panes that accumulate per-feature context and need clearing when a fresh

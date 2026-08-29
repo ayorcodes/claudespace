@@ -15,7 +15,9 @@ from claudespace.pipeline import (
     done_marker_path,
     parse_blocked_marker,
     parse_done_marker,
+    resolve_root,
     think_marker_path,
+    worktree_marker_path,
 )
 
 
@@ -99,3 +101,42 @@ def test_marker_paths_tolerate_a_trailing_slash_on_root():
     assert done_marker_path("/x/", "researcher") == "/x/.claudespace/researcher.done"
     assert blocked_marker_path("/x", "planner") == "/x/.claudespace/planner.blocked"
     assert think_marker_path("/x/") == "/x/.claudespace/think"
+
+
+def test_resolve_root_without_a_worktree_marker_is_a_no_op(tmp_path):
+    root = str(tmp_path)
+    assert resolve_root(root) == root
+
+
+def test_resolve_root_follows_a_worktree_marker_to_a_real_directory(tmp_path):
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktrees" / "vat-exclusion"
+    (root / ".claudespace").mkdir(parents=True)
+    worktree.mkdir(parents=True)
+    (root / ".claudespace" / "worktree").write_text(str(worktree) + "\n")
+
+    assert resolve_root(str(root)) == str(worktree)
+
+
+def test_resolve_root_ignores_a_worktree_marker_pointing_nowhere(tmp_path):
+    root = tmp_path / "main"
+    (root / ".claudespace").mkdir(parents=True)
+    (root / ".claudespace" / "worktree").write_text("/does/not/exist")
+
+    assert resolve_root(str(root)) == str(root)
+
+
+def test_marker_path_builders_honor_a_worktree_marker(tmp_path):
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktrees" / "vat-exclusion"
+    (root / ".claudespace").mkdir(parents=True)
+    worktree.mkdir(parents=True)
+    (root / ".claudespace" / "worktree").write_text(str(worktree))
+
+    assert done_marker_path(str(root), "researcher") == str(
+        worktree / ".claudespace" / "researcher.done"
+    )
+    assert blocked_marker_path(str(root), "planner") == str(
+        worktree / ".claudespace" / "planner.blocked"
+    )
+    assert worktree_marker_path(str(root)) == str(root / ".claudespace" / "worktree")
