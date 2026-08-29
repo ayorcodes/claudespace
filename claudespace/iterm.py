@@ -18,7 +18,7 @@ import iterm2
 from claudespace.assets_sync import PROMPTS_DEST
 from claudespace.config import CANONICAL_PANES, PaneConfig, Template
 from claudespace.layouts import get_layout
-from claudespace.pipeline import think_marker_path
+from claudespace.pipeline import resolve_root, think_marker_path
 from claudespace.themes import ROLE_THEMES, banner_command, build_role_profile
 
 logger = logging.getLogger(__name__)
@@ -356,14 +356,22 @@ async def _launch_pane(
     # build_role_profile, drawn over the TUI) and `claude --name` (see
     # _command_with_baked_persona), which sets the title from inside claude.
     command = _command_with_baked_persona(pane.role, pane.command)
+    # `root` is the workspace's original launch root - fixed for the
+    # window's whole life and used elsewhere for workspace identity
+    # (WORKSPACE_VAR) and marker lookups. The pane's own cwd/env should
+    # instead follow wherever a `worktree` marker (see pipeline.py's
+    # resolve_root) currently points, so a pane launched or lazily revealed
+    # after a role created a run-scoped worktree lands there directly
+    # instead of in the original checkout.
+    effective_root = resolve_root(root)
     await session.async_send_text(
-        f"cd {root} && export CLAUDESPACE_ROOT={root} && "
+        f"cd {effective_root} && export CLAUDESPACE_ROOT={effective_root} && "
         f"export CLAUDESPACE_ROLE={pane.role} && "
         f"export CLAUDESPACE_INSTANCE={instance} && "
         f"export CLAUDESPACE_MAX_ITEMS={max_items} && "
         f"export CLAUDESPACE_THINK={int(think)} && {banner}{command}\n"
     )
-    logger.info("Launched %s (%s) in role '%s'", command, root, pane.role)
+    logger.info("Launched %s (%s) in role '%s'", command, effective_root, pane.role)
 
 
 async def _wait_for_current_session(
