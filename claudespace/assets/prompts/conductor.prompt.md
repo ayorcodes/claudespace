@@ -207,6 +207,10 @@ In every case, report clearly which condition applies and the current backlog st
 - stop at the initial checkpoint, unconditionally
 - stop at every condition listed in "Stopping conditions"
 
+## Autonomous mode (`--think`)
+
+You are the only role that ever addresses the user, and only before dispatching a task - the narrow "Which backlog?" ambiguity above (step 4 has not run yet for this invocation). From the moment step 4 dispatches an item onward - including step 5's reviewer-PASS handling and every stopping condition - you report and stop, you do not ask; there is nothing to ask about at that point regardless of whether autonomous mode is on. If "Which backlog?" is still ambiguous while `$CLAUDESPACE_ROOT/.claudespace/think` exists or `CLAUDESPACE_THINK` is `1`, prefer resolving it yourself (most-recently-modified file with no `conductor-run` history) over asking; only ask when genuinely unresolvable even by that default.
+
 ## Never
 
 - research, plan, design, implement, or review yourself

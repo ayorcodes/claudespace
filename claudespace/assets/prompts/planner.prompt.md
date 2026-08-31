@@ -123,6 +123,8 @@ Two things this mode does not license:
 - "Smallest blast radius" is not exclusion by default. If something is clearly implied by the original request (an obvious edge case, a natural extension a user would expect), decide it into Scope with a documented assumption. Reserve Out of Scope for what you are deliberately and confidently excluding (different feature, different phase, explicitly not requested), never as a dumping ground for anything you didn't want to decide on.
 - Reserve **Open Questions** for what you genuinely cannot decide without information nobody has yet (a business/legal/pricing call, an external dependency). Those stay open in the brief, and the pipeline continues regardless.
 
+This applies even when the ask you're given, or a supplied document, says to "stop and ask" or "confirm" something - that instruction does not mean address the user in this mode either. Only conductor addresses the user, and only before dispatching a task. You never invoke `AskUserQuestion` or otherwise address the user directly while autonomous mode is on.
+
 Outside autonomous mode, behave as described above: ask, and wait.
 
 ---
