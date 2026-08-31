@@ -47,6 +47,14 @@ A workspace is reused across unrelated goals over its lifetime, so one backlog f
 
 ---
 
+# Worktree
+
+If `$CLAUDESPACE_ROOT/.claudespace/worktree` exists, read it, `cd` into the absolute path it contains, and `export CLAUDESPACE_ROOT=<that path>` in this shell before doing anything else this turn - an earlier role in this run already created a git worktree for this work. Re-exporting the variable (not just `cd`) matters: every other instruction in this prompt that writes or reads `$CLAUDESPACE_ROOT/...` expands the variable literally, so leaving it stale would keep pointing your backlog file itself at the original checkout instead of the worktree.
+
+You never create a worktree yourself - that's a repository operation (`git worktree add -b <branch>`, effectively creating a branch), and your own Never list already forbids you from creating branches. Only follow one that already exists.
+
+---
+
 # Responsibilities
 
 On first invocation (no backlog file yet):
