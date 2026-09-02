@@ -102,7 +102,30 @@ def launch_viewer(session: str, *, viewer: str = "ghostty") -> None:
     # "tmux attach -t <session>" as a single argument makes the terminal
     # look for a literal binary named that whole string and fail with
     # "No such file or directory".
+    #
+    # `-L <socket>` matters just as much: every claudespace tmux command
+    # runs on the dedicated `claudespace` socket, not the user's default
+    # one (AD8) - the session physically lives there. A bare `tmux attach`
+    # here (no `-L`) looks on the *default* socket, finds nothing, and
+    # fails with "no sessions" even though the real session is right there
+    # on the dedicated one - reproduced live: every viewer launch failed
+    # this way until this was fixed.
+    from claudespace.backends.tmux_cli import SOCKET_NAME
+
     subprocess.run(
-        ["open", "-b", bundle_id, "-n", "--args", "-e", "tmux", "attach", "-t", session],
+        [
+            "open",
+            "-b",
+            bundle_id,
+            "-n",
+            "--args",
+            "-e",
+            "tmux",
+            "-L",
+            SOCKET_NAME,
+            "attach",
+            "-t",
+            session,
+        ],
         check=True,
     )

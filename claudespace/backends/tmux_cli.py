@@ -17,6 +17,7 @@ integration).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 
 from claudespace.backends.base import BackendUnavailableError
@@ -77,16 +78,27 @@ async def run(*args: str, timeout: float = TMUX_TIMEOUT_SECONDS) -> str:
     no timeout" failure mode ``connect.py`` exists to prevent for iTerm2,
     reproduced here for tmux.
     """
+    proc = await asyncio.create_subprocess_exec(
+        "tmux",
+        *_socket_args(),
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "tmux",
-            *_socket_args(),
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError as exc:
+        # asyncio.wait_for's cancellation does NOT kill the underlying
+        # process - only abandons *awaiting* it, leaving the real `tmux`
+        # client running as an orphan. Verified live: a slow cold-start
+        # new-session call timed out here, its process kept running for
+        # several minutes afterward, and eventually created the session
+        # anyway - racing whatever tried to use the "it failed" result in
+        # the meantime (e.g. a viewer launched against a session that
+        # didn't exist *yet*). Killing it here closes that race.
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
         raise BackendUnavailableError(
             f"tmux command timed out after {timeout}s: tmux {' '.join(args)}"
         ) from exc

@@ -111,15 +111,35 @@ class TestErrorClassification:
 
     def test_timeout_raises_backend_unavailable(self, monkeypatch):
         class HangingProcess:
+            def __init__(self):
+                self.killed = False
+
             async def communicate(self):
                 await asyncio.sleep(10)
 
+            def kill(self):
+                self.killed = True
+
+            async def wait(self):
+                return 0
+
+        processes = []
+
         async def _fake_exec(*args, **kwargs):
-            return HangingProcess()
+            proc = HangingProcess()
+            processes.append(proc)
+            return proc
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         with pytest.raises(BackendUnavailableError):
             asyncio.run(tmux_cli.run("has-session", "-t", "nope", timeout=0.05))
+
+        # The real bug this guards against: asyncio.wait_for's cancellation
+        # does not kill the underlying process on its own - orphaning a
+        # real `tmux` client that can go on to mutate state (e.g. actually
+        # create the session) well after this call already reported
+        # failure. run() must kill it itself.
+        assert processes[0].killed is True
 
 
 class TestParseVersion:

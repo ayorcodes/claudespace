@@ -74,6 +74,18 @@ Run the full claudespace pipeline (workspace build, role handoff, prompt deliver
 
 - **Reliability**: backend failures must surface as clear errors and must not corrupt pipeline state or leave a workspace half-built.
 - **Usability**: switching between iTerm2 and the tmux backend is a single config change; no per-command flags required to use the selected backend.
+
+  **Amendment (recorded by implementer, 2026-09-02, per an explicit direct
+  user instruction in the implementation session - not a planner/principal
+  re-derivation):** the user asked for a `--tmux` CLI flag (mirroring
+  `--lazy`/`--think`) as an *additional*, optional way to select the tmux
+  backend for one invocation, on top of - not instead of - the
+  `config.toml`/`CLAUDESPACE_TERMINAL` path this NFR describes. iTerm2
+  remains the default with no flags at all; nothing about "no flags
+  required" is violated, since the config-based path still fully works
+  with zero flags. The flag exists purely as a lower-friction way to try
+  the tmux backend once without writing a config file first. See design
+  doc AD5's own amendment for the implementation.
 - **Compatibility**: macOS only, matching claudespace's current platform scope; requires tmux to be installed and available on the user's `PATH`.
 
 ---
