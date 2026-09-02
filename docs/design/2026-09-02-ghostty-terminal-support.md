@@ -301,3 +301,19 @@ Increment 1's AD4 (`@cs_*` pane user options as the authoritative live state) is
 - **Exact resurrect option/hook strings.** Confirm against the *vendored* resurrect version: (a) that pane-scoped `@` user options are indeed **not** saved (AD10's premise); (b) the precise `@resurrect-processes` quoting to restore `claude` with its full command line (tilde form); (c) the latest-firing restore hook to attach rehydrate to (the confirmed hook set is `post-save-layout`, `post-save-all`, `pre-restore-all`, `pre-restore-pane-processes` — if none fires *after* panes/processes exist, fall back to invoking `claudespace tmux-rehydrate` from the restored entry pane's own command line, or a one-shot poller). Design commits to the *approach*; these strings are implementation-verified, not assumed.
 - **Positional-key stability.** Verify resurrect restores `(session_name, window_index, pane_index)` deterministically for claudespace's layouts (expected yes); if window/pane indices can renumber, fall back to matching on the restored pane's saved title (`claude --name <role>`).
 - **Phase 2 gating (conversation resume):** is `claude --resume <id>` supported non-interactively, and where does Claude Code persist the per-session id? Answers decide whether/how AD11 phase 2 proceeds. Not a v1 blocker.
+
+---
+
+# Amendment (implementer, 2026-09-02) — `--think`/`--manual` default flip
+
+Out of scope of this design's actual subject (terminal-backend selection) -
+a change to the pipeline's global autonomous-mode default, not to how a
+backend is chosen or driven. See the matching amendment in the Planning
+Brief for the full reasoning; recorded here only for symmetry with that
+note and because `cli.py` is one of this design's own "Modified consumers."
+`--think` now defaults to `True`; `--manual` (`claudespace/cli.py`'s
+`_apply_manual_override`) sets it back to `False` alongside disabling
+auto-handoff, rather than the two being independent flags as before. No
+architecture decision in this document changes as a result - `CLAUDESPACE_THINK`
+export, the `.claudespace/think` marker, and everything AD1-AD12 describe
+about backend selection/persistence are unaffected.

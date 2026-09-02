@@ -153,3 +153,30 @@ None — the strategic fork raised by design (native-per-terminal vs. tmux-every
 - A full claudespace pipeline run (conductor through reviewer) completes entirely inside a Ghostty-hosted tmux session with no functional gaps versus the equivalent iTerm2 run.
 - No regressions reported against existing iTerm2 workflows after this ships.
 - The user adopts the tmux backend for day-to-day use in Ghostty, indicating it is a genuinely viable alternative rather than a checkbox feature.
+
+---
+
+# Amendment (recorded by implementer, 2026-09-02) — `--think`/`--manual` default flip
+
+**Out of scope of this brief's actual subject** (terminal backend
+selection), flagged as such per review: this is a change to the pipeline's
+global autonomous-mode default, affecting every role and every backend
+(iTerm2 included), not something specific to Ghostty/tmux support. It
+landed in this branch/PR because it was requested directly by the user in
+the same implementation conversation as the terminal-backend work, not
+because it belongs to this brief topically. Recorded here (rather than
+silently landed with no paper trail) for the same reason the `--tmux`
+amendment above exists - a direct, explicit product-owner decision made
+mid-implementation, not a planner/principal re-derivation, but one that
+should still be auditable/reversible via a dated note rather than only
+living in code.
+
+**The decision:** autonomous mode (`--think`) is now the CLI default (on
+by default, whereas it previously defaulted off); `--manual` is now the
+single "fully supervised" flag, disabling both auto-handoff and autonomous
+mode together, rather than being two independent toggles. `--think` itself
+still works as an explicit flag but is now redundant. Reasoning given at
+the time: this matches how the tool is actually used day to day (unattended
+by default), and `--manual` remains available whenever full supervision -
+being asked instead of the pipeline deciding, and stepping through handoffs
+by hand - is wanted.
