@@ -414,6 +414,35 @@ class TmuxBackend(TerminalBackend):
             return None
         return TmuxWindow(session=rows[0]["session_name"])
 
+    async def list_all_workspaces(self) -> list[dict[str, Any]]:
+        """Every claudespace-tagged session currently known to this
+        backend's server, grouped by session, for ``claudespace --restore``.
+
+        Waits for an in-flight autorestore first, same as ``find_workspace``
+        - a session that only just autorestored should still show up here,
+        not be missed because it hadn't finished settling yet.
+        """
+        await self._await_autorestore_if_needed()
+        rows = await tmux_cli.list_panes_all(_PANE_FIELDS)
+        by_session: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not row.get("@cs_workspace"):
+                continue
+            session = row["session_name"]
+            entry = by_session.setdefault(
+                session,
+                {
+                    "session": session,
+                    "workspace": row["@cs_workspace"],
+                    "instance": row.get("@cs_instance", ""),
+                    "roles": [],
+                },
+            )
+            role = row.get("@cs_role")
+            if role:
+                entry["roles"].append(role)
+        return sorted(by_session.values(), key=lambda e: e["session"])
+
     async def list_windows(self) -> list[TmuxWindow]:
         # No terminal needs to be running for a tmux workspace to exist
         # (AD3) - there is no "stray default window from a cold app

@@ -178,6 +178,39 @@ class TestFindAndReveal:
 
         asyncio.run(_scenario())
 
+    def test_list_all_workspaces_groups_by_session(self, tmp_path):
+        backend = TmuxBackend(persist=False)
+        marker_a = _marker(tmp_path)
+        marker_b = _marker(tmp_path)
+
+        async def _scenario():
+            window_a = await backend.build_workspace(
+                marker=marker_a,
+                root=marker_a,
+                template_name="native",
+                template=_native_template(),
+                lazy=True,
+            )
+            window_b = await backend.build_workspace(
+                marker=marker_b,
+                root=marker_b,
+                template_name="native",
+                template=_native_template(),
+                lazy=True,
+            )
+
+            entries = await backend.list_all_workspaces()
+            by_session = {e["session"]: e for e in entries}
+            assert window_a.session in by_session
+            assert window_b.session in by_session
+            assert by_session[window_a.session]["workspace"] == marker_a
+            assert by_session[window_a.session]["roles"] == ["researcher"]
+
+            await tmux_cli.kill_session(window_a.session)
+            await tmux_cli.kill_session(window_b.session)
+
+        asyncio.run(_scenario())
+
     def test_reveal_role_splits_and_launches(self, tmp_path):
         backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
@@ -267,19 +300,42 @@ class TestPromptDeliveryAndStall:
         marker = _marker(tmp_path)
 
         async def _scenario():
-            # Prints the ready marker (so build's own prefill step doesn't
-            # burn its full readiness timeout), then exits shortly after -
-            # tmux destroys a pane whose process exits, which is exactly
-            # the "crashed/closed pane" case this checks for.
+            # Only the researcher pane exits quickly - the other 4 stay up
+            # on the default long-lived command. Giving every pane the
+            # same short-lived command was flaky: build_workspace's own
+            # tagging/prefill sequence touches all 5 panes in turn, and if
+            # that whole sequence takes longer than the exit delay, an
+            # *earlier* pane can already be gone by the time a later step
+            # tries to touch it ("can't find pane") - unrelated to what
+            # this test is actually checking.
+            template = Template(
+                layout="main_left_grid_right",
+                panes=(
+                    PaneConfig(role="principal", command="printf '\\xe2\\x9d\\xaf '"),
+                    PaneConfig(role="implementer", command="printf '\\xe2\\x9d\\xaf '"),
+                    PaneConfig(role="reviewer", command="printf '\\xe2\\x9d\\xaf '"),
+                    PaneConfig(role="planner", command="printf '\\xe2\\x9d\\xaf '"),
+                    PaneConfig(
+                        role="researcher",
+                        # Long enough that build_workspace's own prefill
+                        # step (which polls for the ready marker at up to
+                        # a 0.25s cadence, and has to get through tagging
+                        # all 5 panes first) always sees the marker before
+                        # this pane exits - a too-short delay here raced
+                        # that poll and made the test flaky.
+                        command="printf '\\xe2\\x9d\\xaf '; sleep 3; exit 0",
+                    ),
+                ),
+            )
             window = await backend.build_workspace(
                 marker=marker,
                 root=marker,
                 template_name="native",
-                template=_native_template("printf '\\xe2\\x9d\\xaf '; sleep 0.3; exit 0"),
+                template=template,
             )
             pane = await backend.find_role_pane(marker=marker, role="researcher")
             assert pane is not None
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(4.0)
 
             state1, _ = await backend.check_pane_stall(
                 pane, role="researcher", previous=None, now=1.0, stall_after_seconds=600

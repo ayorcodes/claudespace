@@ -44,3 +44,37 @@ def test_resolve_backend_force_tmux_overrides_an_explicit_iterm2_config(
     config_path.write_text('[terminal]\nbackend = "iterm2"\n')
     monkeypatch.setattr("claudespace.config.CONFIG_PATH", config_path)
     assert isinstance(cli._resolve_backend(force_tmux=True), TmuxBackend)
+
+
+class TestThinkDefaultAndManualOverride:
+    def test_think_defaults_to_on(self):
+        args = cli._build_parser().parse_args(["--root", "/tmp"])
+        assert args.think is True
+        assert args.auto_handoff is True
+
+    def test_manual_disables_both_auto_handoff_and_think(self):
+        args = cli._build_parser().parse_args(["--manual", "--root", "/tmp"])
+        cli._apply_manual_override(args)
+        assert args.auto_handoff is False
+        assert args.think is False
+
+    def test_manual_wins_even_with_explicit_think(self):
+        args = cli._build_parser().parse_args(["--manual", "--think", "--root", "/tmp"])
+        cli._apply_manual_override(args)
+        assert args.think is False
+
+    def test_no_manual_leaves_think_on(self):
+        args = cli._build_parser().parse_args(["--root", "/tmp"])
+        cli._apply_manual_override(args)
+        assert args.think is True
+        assert args.auto_handoff is True
+
+
+class TestRestoreFlag:
+    def test_restore_flag_defaults_to_false(self):
+        args = cli._build_parser().parse_args(["--root", "/tmp"])
+        assert args.restore is False
+
+    def test_restore_flag_can_be_set(self):
+        args = cli._build_parser().parse_args(["--restore"])
+        assert args.restore is True

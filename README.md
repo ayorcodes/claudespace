@@ -89,23 +89,27 @@ claudespace --new                # force a new window even if one exists
 claudespace --template agentic   # unattended multi-feature run
 claudespace --list-templates     # show available templates
 
-claudespace --manual             # don't auto-submit handoffs; you press enter
-claudespace --think              # autonomous: roles decide open questions themselves
+claudespace --manual             # fully supervised: no auto-submit handoffs, no autonomous decisions
 claudespace --lazy               # start with one pane; others appear as work reaches them
+claudespace --restore            # list restorable/running tmux-backed sessions (tmux backend only)
 ```
+
+Autonomous mode (roles decide open questions themselves instead of asking
+you) is **on by default** - pass `--manual` to turn it off and get asked.
+`--think` still exists (redundant now, kept for explicit scripts).
 
 **The combination worth knowing:**
 
 ```
-claudespace --lazy --new --think
+claudespace --lazy --new --tmux
 ```
 
 A fresh window (`--new`), starting as a single `researcher` pane rather than a
 six-way split (`--lazy`) - each further pane splits into existence only when
-work actually reaches it, so you're never looking at five idle terminals. And
-`--think` means nothing stops to ask you a question: roles that would normally
-pause decide for themselves and write the decision down, so you can start it
-and walk away. Give it a task and come back to a review.
+work actually reaches it, so you're never looking at five idle terminals - in
+Ghostty via the tmux backend (`--tmux`). Roles decide open questions
+themselves and write the decision down (the default), so you can start it and
+walk away. Give it a task and come back to a review.
 
 Maintenance:
 
@@ -318,23 +322,25 @@ Brief back to planner, reviewer returning CHANGES REQUIRED to implementer)
 follows the same toggle: auto-submitted by default, prefill-only under
 `--manual`.
 
-### `--think` (autonomous mode)
+### Autonomous mode (on by default)
 
-The planner normally stops and asks when a product question materially
-affects scope or acceptance criteria. `claudespace --think` turns that off:
-the planner still writes each question down, but answers it itself the way
-a 30-year staff engineer at a top-tier shop would - conventional choice,
-smallest blast radius, scope narrowed rather than widened - and records it
-in the Planning Brief's **Assumptions** as `Q: ... -> A: ... (decided
+The planner would otherwise stop and ask when a product question materially
+affects scope or acceptance criteria - by default it doesn't: the planner
+still writes each question down, but answers it itself the way a 30-year
+staff engineer at a top-tier shop would - conventional choice, smallest
+blast radius, scope narrowed rather than widened - and records it in the
+Planning Brief's **Assumptions** as `Q: ... -> A: ... (decided
 autonomously)` so you can audit or reverse any single call later. Only
 questions nobody could answer yet (business/legal/pricing, external
 dependencies) stay in **Open Questions**, and the pipeline continues past
-them.
+them. `--manual` (see above) turns this off, alongside disabling
+auto-submitted handoffs - the pipeline then stops and asks instead of
+deciding for you.
 
-The flag writes a `.claudespace/think` marker (also exported to each pane
-as `CLAUDESPACE_THINK=1`), so it applies to an already-open workspace too:
-re-run `claudespace --think` in the folder to switch the mode on, and a
-plain `claudespace` run to switch it back off.
+The mode is tracked by a `.claudespace/think` marker (also exported to each
+pane as `CLAUDESPACE_THINK=1`), so it applies to an already-open workspace
+too: re-run `claudespace --manual` in the folder to switch it off, and a
+plain `claudespace` run to switch it back on.
 
 ### Bouncing questions, not just rejections
 

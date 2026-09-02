@@ -1,6 +1,6 @@
 # Ghostty Terminal Support (via a tmux backend) — Implementation Design
 
-Status: Increment 1 (tmux backend) implemented. Increment 2 (session persistence) designed, pending implementation.
+Status: implemented (Increment 1: tmux backend; Increment 2: session persistence across a reboot via vendored tmux-resurrect/tmux-continuum).
 
 ## References
 

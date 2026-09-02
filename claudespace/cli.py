@@ -19,7 +19,13 @@ from claudespace import (
 from claudespace.backends import get_backend
 from claudespace.backends.base import TerminalBackend
 from claudespace.backends.common import DEFAULT_MAX_ITEMS
-from claudespace.config import DEFAULT_TEMPLATE, get_template, list_templates
+from claudespace.config import (
+    DEFAULT_TEMPLATE,
+    get_template,
+    list_templates,
+    load_tmux_persistence,
+    load_tmux_viewer,
+)
 from claudespace.watchdog import DEFAULT_INTERVAL_SECONDS, DEFAULT_STALL_AFTER_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -124,21 +130,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--manual",
         dest="auto_handoff",
         action="store_false",
-        help="Disable auto-handoff: pipeline handoffs between panes "
-        "(researcher->planner->principal->implementer->reviewer), including "
-        "rejected/blocked bounces, only prefill the next pane's input - you "
-        "press enter to advance. By default, all handoffs auto-submit.",
+        help="Fully supervised mode: disables both auto-handoff (pipeline "
+        "handoffs between panes - researcher->planner->principal->"
+        "implementer->reviewer, including rejected/blocked bounces - only "
+        "prefill the next pane's input, you press enter to advance) and "
+        "autonomous (--think) mode. This is the opposite of the default: "
+        "by default all handoffs auto-submit and roles decide autonomously "
+        "instead of stopping to ask you. Use --manual when you're at the "
+        "keyboard and want to stay in the loop on everything.",
     )
     parser.add_argument(
         "--think",
         action="store_true",
-        help="Autonomous mode: roles never stop to ask you clarifying "
-        "questions. The planner, instead of pausing on an open product "
-        "question, answers it the way a 30-year staff engineer at a "
-        "top-tier shop would and records the answer as an explicit "
-        "decision in the Planning Brief. Use when you're away from the "
-        "machine and don't want the pipeline stalling on a prompt. A run "
-        "without this flag turns the mode back off for that workspace.",
+        default=True,
+        help="Autonomous mode (on by default): roles never stop to ask you "
+        "clarifying questions. The planner, instead of pausing on an open "
+        "product question, answers it the way a 30-year staff engineer at "
+        "a top-tier shop would and records the answer as an explicit "
+        "decision in the Planning Brief. This flag is redundant now that "
+        "it's the default - kept for explicitness in scripts. Use "
+        "--manual to turn it back off.",
     )
     parser.add_argument(
         "--lazy",
@@ -173,6 +184,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="List available template names and exit.",
     )
     parser.add_argument(
+        "--restore",
+        action="store_true",
+        help="tmux backend only: list every restorable/running tmux-backed "
+        "workspace (session, root folder, roles present) and exit - "
+        "waits briefly for an in-flight autorestore first, same as a "
+        "normal attach. Doesn't attach anything itself; run 'claudespace "
+        "--tmux --root <dir>' (or 'tmux -L claudespace attach -t "
+        "<session>') against whichever one you want.",
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging."
     )
     return parser
@@ -201,6 +222,42 @@ async def _run(
         max_items=max_items,
         just_launched_terminal=just_launched_terminal,
     )
+
+
+async def _list_restorable(backend: TerminalBackend) -> None:
+    from claudespace.backends.tmux import TmuxBackend
+
+    assert isinstance(backend, TmuxBackend)  # guarded by the caller
+    entries = await backend.list_all_workspaces()
+    if not entries:
+        print("No claudespace tmux sessions found.")
+        return
+    for entry in entries:
+        roles = ", ".join(entry["roles"]) or "(none tagged)"
+        print(f"{entry['session']}  root={entry['workspace']}  roles={roles}")
+    print()
+    print("Attach with: claudespace --tmux --root <root>")
+    print("         or: tmux -L claudespace attach -t <session>")
+
+
+def _run_restore_listing() -> None:
+    """``claudespace --restore``: list every tmux-backed session found
+    (waiting briefly for an in-flight autorestore first, same as a normal
+    attach), then exit - doesn't attach anything itself.
+    """
+    from claudespace.backends.tmux import TmuxBackend
+
+    persist, persist_interval_minutes = load_tmux_persistence()
+    backend = TmuxBackend(
+        viewer=load_tmux_viewer(),
+        persist=persist,
+        persist_interval_minutes=persist_interval_minutes,
+    )
+    try:
+        backend.run(_list_restorable)
+    except Exception:
+        logger.exception("Failed to list restorable tmux sessions")
+        sys.exit(1)
 
 
 async def _run_watchdog(
@@ -289,11 +346,23 @@ def _ensure_terminal_launched(backend: TerminalBackend) -> bool:
     return not was_running
 
 
+def _apply_manual_override(args: argparse.Namespace) -> None:
+    """``--manual`` is the single "fully supervised" toggle: disables both
+    auto-handoff (already its own dest, set ``False`` by the flag itself)
+    and autonomous (``--think``) mode, which now defaults on. ``--manual``
+    wins over an explicit ``--think``, since it's the more conservative
+    choice - mutates ``args`` in place.
+    """
+    if not args.auto_handoff:
+        args.think = False
+
+
 def main() -> None:
     """Entrypoint installed as the ``claudespace`` console script."""
     parser = _build_parser()
     args = parser.parse_args()
     utils.setup_logging(args.verbose)
+    _apply_manual_override(args)
 
     environment.require_macos()
 
@@ -337,6 +406,10 @@ def main() -> None:
     if args.list_templates:
         for template_name in list_templates():
             print(template_name)
+        return
+
+    if args.restore:
+        _run_restore_listing()
         return
 
     try:
