@@ -6,3 +6,6 @@ dist/
 build/
 .venv-test/
 .pytest_cache/
+
+# Screenshots dropped in the repo root while debugging
+Screenshot*.png
