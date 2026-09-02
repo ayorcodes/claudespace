@@ -11,12 +11,12 @@ pane just silently burns wall-clock until someone happens to look.
 
 This module polls each role pane on an interval and asks the backend
 whether it looks stalled (``TerminalBackend.check_pane_stall`` - see AD6 in
-the design doc). On iTerm2 that's a screen-content diff: a pane whose
-screen is byte-for-byte identical across a full interval, and whose last
-non-blank line is *not* claude's ready prompt, is flagged. Ghostty's
-AppleScript surface exposes no screen buffer at all, so its backend can
-only detect a pane's crash/disappearance - stall-while-alive is a known
-limitation of that backend, documented in the design.
+the design doc). Both backends use the same full-fidelity screen-content
+diff: a pane whose screen is byte-for-byte identical across a full
+interval, and whose last non-blank line is *not* claude's ready prompt, is
+flagged - iTerm2 reads the screen via its Python API, tmux via
+``capture-pane`` (``backends/common.py``'s shared ``screen_signature``/
+``stall_decision``).
 
 Run via ``claudespace watchdog --root <dir>`` in its own terminal, or
 backgrounded (``nohup ... &``), or driven by an external scheduler - it is

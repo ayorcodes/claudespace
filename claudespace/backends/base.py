@@ -6,9 +6,9 @@ and threaded through to whichever entrypoint ``run`` calls -
 the backend, never a specific terminal's connection/app object directly.
 
 ``Pane``/``Window`` are opaque handles: iTerm2's are ``iterm2.Session``/
-``iterm2.Window``, Ghostty's are small dataclasses wrapping a terminal/window
-``id`` (see ``backends/ghostty.py``). Nothing outside a backend's own module
-inspects one beyond passing it back into another backend method.
+``iterm2.Window``, tmux's are small dataclasses wrapping a ``#{pane_id}``/
+session name (see ``backends/tmux.py``). Nothing outside a backend's own
+module inspects one beyond passing it back into another backend method.
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ class TerminalBackend(ABC):
         called ``iterm2.Session.async_split_pane`` itself, outside
         ``iterm.py``'s old public surface - see ``Layout.build``): the
         layout *tree* stays backend-agnostic, only this primitive differs
-        between iTerm2's native split and Ghostty's ``split`` command.
+        between iTerm2's native split and tmux's ``split-window``.
         ``vertical=True`` produces a left/right divider (new pane on the
         right), ``vertical=False`` a top/bottom divider (new pane below).
         """
@@ -200,8 +200,10 @@ class TerminalBackend(ABC):
 
         ``previous`` is whatever this same method returned as its first
         element on this role's last poll (``None`` on the first poll ever
-        seen for it) - each backend owns its own state shape, since iTerm2's
-        decision is content-diff-based and Ghostty's is existence-based
-        (AD6). Returns ``(new_state, is_stalled_now)``; ``watchdog.py``
-        stores ``new_state`` verbatim and only acts on ``is_stalled_now``.
+        seen for it). Both backends use the same full-fidelity
+        content-diff algorithm (AD6) - ``backends/common.py``'s
+        ``screen_signature``/``stall_decision`` - fed from each backend's
+        own way of reading a pane's visible text. Returns
+        ``(new_state, is_stalled_now)``; ``watchdog.py`` stores
+        ``new_state`` verbatim and only acts on ``is_stalled_now``.
         """

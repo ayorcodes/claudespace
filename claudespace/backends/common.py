@@ -3,22 +3,20 @@
 Pure functions of the role/config that know nothing about a specific
 terminal's scripting API - moved out of the old ``iterm.py`` so persona
 baking, prompt-prefix semantics, and timing constants can't drift between
-the iTerm2 and Ghostty implementations.
+the iTerm2 and tmux implementations.
 """
 
 from __future__ import annotations
 
 import os
 import shlex
+from typing import Any
 
 from claudespace.assets_sync import PROMPTS_DEST
 from claudespace.pipeline import resolve_root
 
-# Printed by claude's input box once its TUI accepts text on iTerm2, where
-# the screen can actually be read. Ghostty has no screen-read equivalent
-# (see backends/ghostty.py's readiness poll, which uses the pane title
-# instead) - this constant stays here because it's still iTerm2's own ready
-# signal, just relocated alongside the timing constants below it.
+# Printed by claude's input box once its TUI accepts text. Both backends can
+# read this: iTerm2 via its screen-content API, tmux via `capture-pane`.
 CLAUDE_PROMPT_MARKER = "❯"
 
 # Fallback for CLAUDESPACE_MAX_ITEMS (see --max-items) when a caller has
@@ -44,8 +42,7 @@ SUBMIT_MAX_ATTEMPTS = 3
 # keystroke burst as an in-progress paste, and during that window "\r" is
 # inserted as a literal newline instead of submitting - the "Enter just adds
 # a new line" failure. It clears within one repaint; the confirm/retry loop
-# (iTerm2) or the single resend (Ghostty) backstops whatever this doesn't
-# cover.
+# backstops whatever this doesn't cover.
 SUBMIT_KEYSTROKE_SETTLE_SECONDS = 0.3
 
 
@@ -86,8 +83,8 @@ def command_with_baked_persona(role: str, command: str) -> str:
     in-band indication of which role it is (the launch banner scrolls out of
     the alt-screen immediately, and the theme background is painted over).
     See ``themes.build_role_profile`` for the badge, which is the label that
-    stays visible on iTerm2; Ghostty relies on the title alone (see
-    backends/ghostty.py).
+    stays visible on iTerm2; the tmux backend conveys it via pane-border
+    title/style instead (see ``backends/tmux.py``).
 
     This applies to a custom command from a user's own template
     (``~/.config/claudespace/templates.toml`` pointing a pane at a wrapper
@@ -122,7 +119,7 @@ def launch_command_text(
     optional theme banner, then ``command``.
 
     Shared verbatim by both backends - iTerm2 sends it via
-    ``async_send_text``, Ghostty via ``input text`` - so the pane's launch
+    ``async_send_text``, tmux via ``send-keys`` - so the pane's launch
     environment can't drift between them. ``root`` is the workspace's
     original launch root; ``resolve_root`` follows a run-scoped worktree
     marker if one has been created since, same as every other marker-path
@@ -136,3 +133,51 @@ def launch_command_text(
         f"export CLAUDESPACE_MAX_ITEMS={max_items} && "
         f"export CLAUDESPACE_THINK={int(think)} && {banner}{command}\n"
     )
+
+
+def screen_signature(text: str) -> tuple[str, bool]:
+    """Return ``(full-screen text, ends-at-ready-prompt)`` for one poll of
+    a pane's visible content.
+
+    ``ends-at-ready-prompt`` mirrors the ready-prompt detection used while
+    waiting for claude to come up (``CLAUDE_PROMPT_MARKER``), so "idle at
+    prompt" is recognized the same way everywhere. Shared by both backends'
+    watchdog content-diffing (AD6): iTerm2 gets ``text`` from
+    ``async_get_screen_contents``, tmux from ``capture-pane -p``.
+    """
+    lines = text.split("\n")
+    ready = any(
+        line.strip().startswith(CLAUDE_PROMPT_MARKER) for line in lines if line.strip()
+    )
+    return text, ready
+
+
+def stall_decision(
+    previous: dict[str, Any] | None,
+    *,
+    text: str,
+    ready: bool,
+    now: float,
+    stall_after_seconds: float,
+) -> tuple[dict[str, Any], bool]:
+    """Pure watchdog stall decision shared by both backends (AD6: both get
+    full-fidelity content-diff, unlike the superseded native-Ghostty draft's
+    crash-detection-only descope).
+
+    Mirrors the original ``watchdog._check_once`` state machine exactly
+    (move-only): every poll's snapshot is recorded as the new state
+    regardless of outcome, and a stall is flagged (with the clock reset)
+    only once the recorded state has stopped changing across two
+    consecutive polls, isn't idle-at-prompt, and enough time has elapsed
+    since the state was first that value.
+    """
+    current = {"text": text, "ready": ready, "seen_at": now}
+    if previous is None:
+        return current, False
+    if text != previous["text"]:
+        return current, False
+    if ready:
+        return current, False
+    if now - previous["seen_at"] < stall_after_seconds:
+        return current, False
+    return current, True

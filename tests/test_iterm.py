@@ -1,5 +1,5 @@
 """Regression guard for the iTerm2 backend (AD1, Implementation Order step 3):
-these tests exercised ``claudespace.iterm`` before the Ghostty backend
+these tests exercised ``claudespace.iterm`` before the tmux backend
 existed, and now exercise ``claudespace.backends.iterm``/``.common`` in the
 same shape - the move is behavior-preserving, not a rewrite.
 """

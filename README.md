@@ -528,28 +528,34 @@ of them without reinstalling:
 no Windows or Linux equivalent — there is no cross-platform version of this
 tool possible without swapping out the terminal entirely.
 
-### Terminal backend (experimental Ghostty support)
+### Terminal backend (tmux, for Ghostty)
 
 claudespace drives iTerm2 by default. [Ghostty](https://ghostty.org) is
-supported as an opt-in, **experimental** alternative — its scripting surface
-is an unstable preview, so treat it as a "try it and see" option, not a
-production-equal path yet. Switch by creating
+supported via an opt-in **tmux backend**: claudespace builds the pipeline as
+a detached tmux session and opens Ghostty attached to it, rather than
+driving Ghostty's own (preview-status) scripting API directly. That gives
+full parity with the iTerm2 experience — confirmed prompt delivery and
+full-fidelity stall detection both need tmux's `capture-pane`, which
+Ghostty's own automation surface doesn't yet expose. Switch by creating
 `~/.config/claudespace/config.toml`:
 
 ```toml
 [terminal]
-backend = "ghostty"   # or "iterm2" (the default)
+backend = "tmux"      # or "iterm2" (the default)
+
+[terminal.tmux]
+viewer = "ghostty"    # which terminal hosts `tmux attach`; default "ghostty"
 ```
 
-Everything works the same either way — workspace layout, prompt delivery,
-role handoff, `claudespace-msg`, and `claudespace watchdog` all run against
-whichever backend is configured. The one known gap: Ghostty's scripting API
-has no way to read a pane's on-screen contents, so `claudespace watchdog`
-can only detect a Ghostty pane that has crashed or disappeared — it can't
-catch a pane stuck behind a dialog or a runaway tool loop the way it does on
-iTerm2. If Ghostty is selected but can't be reached (not running, or
-automation permission denied), claudespace fails immediately with a message
-naming the fix rather than hanging or silently falling back to iTerm2.
+Requires `tmux` on `PATH` (`brew install tmux`). Everything works the same
+as on iTerm2 — workspace layout, confirmed prompt delivery, role handoff,
+`claudespace-msg`, and full-fidelity `claudespace watchdog` all run against
+whichever backend is configured. Because the tmux session is detached from
+the viewer, closing the Ghostty window doesn't end the workspace — the
+pipeline keeps running, and `tmux attach -t <session-name>` reattaches to
+it. If tmux isn't installed, or the session can't be launched, claudespace
+fails immediately with a message naming the fix rather than hanging or
+silently falling back to iTerm2.
 
 ### Bundled commands and prompts
 

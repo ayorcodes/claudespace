@@ -30,7 +30,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="claudespace",
         description="Build or attach to a terminal development workspace for a "
         "folder (iTerm2 by default; see 'terminal.backend' in "
-        "~/.config/claudespace/config.toml for the experimental Ghostty backend).",
+        "~/.config/claudespace/config.toml for the tmux backend, the "
+        "supported way to run claudespace in Ghostty).",
     )
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser(
@@ -44,8 +45,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "iTerm2, and iTerm2's Python API. Run automatically by install.sh so "
         "the one-time setup happens at install time rather than partway "
         "through your first real run. Only checks the iTerm2 backend - the "
-        "Ghostty backend's own reachability check runs at build time instead "
-        "(see 'terminal.backend').",
+        "tmux backend's own preflight (tmux installed/new enough) runs at "
+        "build time instead (see 'terminal.backend').",
     )
     doctor_parser.add_argument(
         "--yes",
@@ -93,8 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_STALL_AFTER_SECONDS,
         help="Seconds of unchanged, non-idle screen output before a pane is "
         f"flagged as possibly stalled (default: {DEFAULT_STALL_AFTER_SECONDS}). "
-        "On the Ghostty backend, only crash/disappearance is detected - this "
-        "threshold is iTerm2-only (AD6).",
+        "Applies identically on the iTerm2 and tmux backends (AD6).",
     )
     parser.add_argument(
         "--root",
@@ -217,24 +217,23 @@ def _resolve_backend() -> TerminalBackend:
 
 
 def _ensure_terminal_launched(backend: TerminalBackend) -> bool:
-    """Cold-launch the backend's terminal app if it isn't already running.
+    """Cold-launch iTerm2 if it isn't already running, and run claudespace's
+    own preflight checks against it (Python API enablement etc, see
+    ``environment.py``).
 
     Returns whether we just launched it (``just_launched_terminal``, threaded
     through to ``workspace.open_workspace`` so it knows whether the default
-    empty window it finds afterwards is stray chrome to clean up). Only the
-    iTerm2 path runs claudespace's own preflight checks (Python API
-    enablement etc, see ``environment.py``) - the Ghostty backend's own
-    reachability probe in ``GhosttyBackend.run`` covers the equivalent
-    ground for it (AC7).
-    """
-    from claudespace.backends.ghostty import GhosttyBackend
+    empty window it finds afterwards is stray chrome to clean up).
 
-    if isinstance(backend, GhosttyBackend):
-        was_running = utils.is_ghostty_running()
-        if not was_running:
-            logger.info("Ghostty is not running - launching it")
-            utils.launch_ghostty()
-        return not was_running
+    Only meaningful for the iTerm2 path: the tmux backend builds entirely
+    headlessly against a detached tmux server (AD3) and only spawns a
+    viewer terminal afterwards, in ``TmuxBackend.activate_window`` - there is
+    nothing to cold-launch before that, so this is a no-op for it.
+    """
+    from claudespace.backends.tmux import TmuxBackend
+
+    if isinstance(backend, TmuxBackend):
+        return False
 
     was_running = utils.is_iterm_running()
     environment.ensure_environment(iterm_was_running=was_running)

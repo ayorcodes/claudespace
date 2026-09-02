@@ -77,7 +77,7 @@ class Layout:
         """Materialize every role's pane, splitting the tree all at once.
 
         ``backend.split_pane`` is the only backend-specific piece - iTerm2
-        and Ghostty split differently, but the tree shape (which role ends
+        and tmux split differently, but the tree shape (which role ends
         up where) is identical for both.
         """
         panes: dict[str, "Pane"] = {}

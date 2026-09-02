@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import time
 
@@ -57,27 +58,46 @@ def launch_iterm(*, timeout: float = 10.0) -> None:
 
 GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty"
 
+# Which terminal `launch_viewer` knows how to spawn attaching to a detached
+# tmux session (AD5's `[terminal.tmux] viewer`). Ghostty is the default and
+# the backend's whole reason for existing; each entry is a one-line lookup
+# so another viewer is a small, isolated addition (design's Open Questions).
+_VIEWER_BUNDLE_IDS: dict[str, str] = {
+    "ghostty": GHOSTTY_BUNDLE_ID,
+    "iterm2": "com.googlecode.iterm2",
+}
 
-def is_ghostty_running() -> bool:
-    """Check whether Ghostty.app is currently running. Peer of
-    ``is_iterm_running`` for the Ghostty backend's own cold-launch handling
-    (see ``cli.py``)."""
-    result = subprocess.run(
-        ["pgrep", "-x", "Ghostty"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+
+def is_tmux_available() -> bool:
+    """Whether a ``tmux`` binary is on ``PATH``. Peer of ``is_iterm_running``
+    for the tmux backend's own preflight (see ``backends/tmux.py``'s
+    ``TmuxBackend.run``, which is the actual gate - this is exposed here too
+    per the design's Components list, for symmetry with the iTerm2 checks
+    cli.py already runs at entry)."""
+    return shutil.which("tmux") is not None
+
+
+def launch_viewer(session: str, *, viewer: str = "ghostty") -> None:
+    """Spawn ``viewer`` running ``tmux attach -t <session>`` - how the tmux
+    backend makes a detached session visible (AD3/AD5). Unlike
+    ``launch_iterm`` (which starts a bare app claudespace then connects an
+    API to), this both launches the terminal *and* points it at the right
+    tmux session in one step, since a tmux viewer has no separate
+    scripting API to drive afterwards - the command line is the whole
+    interface.
+
+    Best-effort on the wait: a viewer that fails to launch doesn't corrupt
+    anything (Error Handling) - the detached session is untouched and still
+    reachable via a manual ``tmux attach -t <session>``, so this only waits
+    long enough to make failure visible quickly, and doesn't retry forever.
+    """
+    bundle_id = _VIEWER_BUNDLE_IDS.get(viewer)
+    if bundle_id is None:
+        raise ValueError(
+            f"Unknown tmux viewer '{viewer}'. Known viewers: "
+            f"{', '.join(sorted(_VIEWER_BUNDLE_IDS))}"
+        )
+    subprocess.run(
+        ["open", "-b", bundle_id, "-n", "--args", "-e", f"tmux attach -t {session}"],
+        check=True,
     )
-    return result.returncode == 0
-
-
-def launch_ghostty(*, timeout: float = 10.0) -> None:
-    """Launch Ghostty.app if it is not already running, and wait for it.
-    Peer of ``launch_iterm``; see its docstring for why ``open -b`` and a
-    poll loop are used instead of racing straight into automation."""
-    subprocess.run(["open", "-b", GHOSTTY_BUNDLE_ID], check=True)
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if is_ghostty_running():
-            return
-        time.sleep(0.2)

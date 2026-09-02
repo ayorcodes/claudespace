@@ -2,13 +2,14 @@
 
 ``get_backend()`` is the single place a consumer (``cli.py``) turns "which
 terminal am I driving" into a concrete ``TerminalBackend`` instance -
-nothing downstream of it ever imports ``iterm2`` or knows Ghostty exists.
+nothing downstream of it ever imports ``iterm2`` or the ``tmux`` CLI
+directly.
 """
 
 from __future__ import annotations
 
 from claudespace.backends.base import TerminalBackend
-from claudespace.config import load_terminal_backend
+from claudespace.config import load_terminal_backend, load_tmux_viewer
 
 __all__ = ["TerminalBackend", "get_backend"]
 
@@ -28,10 +29,10 @@ def get_backend(name: str | None = None) -> TerminalBackend:
         from claudespace.backends.iterm import ItermBackend
 
         return ItermBackend()
-    if resolved == "ghostty":
-        from claudespace.backends.ghostty import GhosttyBackend
+    if resolved == "tmux":
+        from claudespace.backends.tmux import TmuxBackend
 
-        return GhosttyBackend()
+        return TmuxBackend(viewer=load_tmux_viewer())
     raise ValueError(
-        f"Unknown terminal backend '{resolved}'. Known backends: ghostty, iterm2"
+        f"Unknown terminal backend '{resolved}'. Known backends: iterm2, tmux"
     )

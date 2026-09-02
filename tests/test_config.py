@@ -15,6 +15,7 @@ from claudespace.config import (
     ensure_agentic_template_seeded,
     ensure_native_template_seeded,
     load_terminal_backend,
+    load_tmux_viewer,
     load_user_templates,
     migrate_role_commands,
 )
@@ -130,11 +131,11 @@ class TestLoadTerminalBackend:
         assert load_terminal_backend(toml_path, env={}) == "iterm2"
 
     def test_reads_the_configured_value(self, toml_path):
-        toml_path.write_text('[terminal]\nbackend = "ghostty"\n')
-        assert load_terminal_backend(toml_path, env={}) == "ghostty"
+        toml_path.write_text('[terminal]\nbackend = "tmux"\n')
+        assert load_terminal_backend(toml_path, env={}) == "tmux"
 
     def test_env_override_wins_over_the_file(self, toml_path):
-        toml_path.write_text('[terminal]\nbackend = "ghostty"\n')
+        toml_path.write_text('[terminal]\nbackend = "tmux"\n')
         assert (
             load_terminal_backend(toml_path, env={"CLAUDESPACE_TERMINAL": "iterm2"})
             == "iterm2"
@@ -143,9 +144,9 @@ class TestLoadTerminalBackend:
     def test_env_override_works_without_a_file(self, tmp_path):
         assert (
             load_terminal_backend(
-                tmp_path / "nope.toml", env={"CLAUDESPACE_TERMINAL": "ghostty"}
+                tmp_path / "nope.toml", env={"CLAUDESPACE_TERMINAL": "tmux"}
             )
-            == "ghostty"
+            == "tmux"
         )
 
     def test_unknown_value_in_the_file_is_a_named_error(self, toml_path):
@@ -160,3 +161,16 @@ class TestLoadTerminalBackend:
     def test_missing_terminal_table_defaults_to_iterm2(self, toml_path):
         toml_path.write_text('[templates.mine]\nlayout = "main_left_grid_right"\n')
         assert load_terminal_backend(toml_path, env={}) == "iterm2"
+
+
+class TestLoadTmuxViewer:
+    def test_defaults_to_ghostty(self, tmp_path):
+        assert load_tmux_viewer(tmp_path / "nope.toml") == "ghostty"
+
+    def test_reads_the_configured_viewer(self, toml_path):
+        toml_path.write_text('[terminal.tmux]\nviewer = "iterm2"\n')
+        assert load_tmux_viewer(toml_path) == "iterm2"
+
+    def test_missing_tmux_table_defaults_to_ghostty(self, toml_path):
+        toml_path.write_text('[terminal]\nbackend = "tmux"\n')
+        assert load_tmux_viewer(toml_path) == "ghostty"

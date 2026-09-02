@@ -3,7 +3,7 @@
 This is the only module that talks to ``iterm2`` directly. Everything else
 in the package works with the ``TerminalBackend`` interface, which keeps the
 rest of the codebase testable without a running iTerm2 instance and lets a
-second backend (Ghostty) exist alongside it.
+second backend (tmux) exist alongside it.
 
 Moved verbatim (move + thin delegating class, not a rewrite - AD1) from the
 old top-level ``claudespace/iterm.py``, so the iTerm2 path stays
@@ -39,6 +39,8 @@ from claudespace.backends.common import (
     command_with_baked_persona,
     launch_command_text,
     role_prompt_prefix,
+    screen_signature,
+    stall_decision,
 )
 from claudespace.config import CANONICAL_PANES, PaneConfig, Template
 from claudespace.layouts import get_layout
@@ -479,45 +481,10 @@ def _largest_sibling(source: "iterm2.Session") -> "iterm2.Session":
 
 
 def _screen_signature(session_contents: "iterm2.ScreenContents") -> tuple[str, bool]:
-    """Return ``(full-screen text, ends-at-ready-prompt)`` for one poll.
-
-    The full text (not a hash) is kept only for the unchanged-comparison in
-    ``check_pane_stall``; nothing persists it past that. ``ends-at-ready-
-    prompt`` mirrors ``_wait_for_claude_prompt``'s own detection of claude's
-    ``❯`` marker, so "idle at prompt" is recognized the same way everywhere.
-    """
+    """Return ``(full-screen text, ends-at-ready-prompt)`` for one poll, via
+    ``common.screen_signature`` (shared with the tmux backend - AD6)."""
     lines = [session_contents.line(i).string for i in range(session_contents.number_of_lines)]
-    text = "\n".join(lines)
-    ready = any(
-        line.strip().startswith(CLAUDE_PROMPT_MARKER) for line in lines if line.strip()
-    )
-    return text, ready
-
-
-def stall_decision(
-    previous: dict[str, Any] | None, *, text: str, ready: bool, now: float, stall_after_seconds: float
-) -> tuple[dict[str, Any], bool]:
-    """Pure decision function behind ``ItermBackend.check_pane_stall``,
-    factored out so the regression-guard tests can exercise it directly
-    without a fake iTerm2 session.
-
-    Mirrors the original ``watchdog._check_once`` state machine exactly
-    (move-only, AD1): every poll's snapshot is recorded as the new state
-    regardless of outcome, and a stall is flagged (with the clock reset)
-    only once the recorded state has stopped changing across two
-    consecutive polls, isn't idle-at-prompt, and enough time has elapsed
-    since the state was first that value.
-    """
-    current = {"text": text, "ready": ready, "seen_at": now}
-    if previous is None:
-        return current, False
-    if text != previous["text"]:
-        return current, False
-    if ready:
-        return current, False
-    if now - previous["seen_at"] < stall_after_seconds:
-        return current, False
-    return current, True
+    return screen_signature("\n".join(lines))
 
 
 class ItermBackend(TerminalBackend):

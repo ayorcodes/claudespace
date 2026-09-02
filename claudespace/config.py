@@ -31,11 +31,13 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # AD5: which terminal claudespace drives. No general config file existed
-# before Ghostty support - this is the first key in it. Absent file or key
+# before the tmux backend - this is the first key in it. Absent file or key
 # defaults to iTerm2 (FR1/AC8), never a silent third option.
 CONFIG_PATH = Path.home() / ".config" / "claudespace" / "config.toml"
 DEFAULT_TERMINAL_BACKEND = "iterm2"
-KNOWN_TERMINAL_BACKENDS = frozenset({"iterm2", "ghostty"})
+KNOWN_TERMINAL_BACKENDS = frozenset({"iterm2", "tmux"})
+
+DEFAULT_TMUX_VIEWER = "ghostty"
 
 
 def load_terminal_backend(
@@ -85,6 +87,24 @@ def load_terminal_backend(
             f"{', '.join(sorted(KNOWN_TERMINAL_BACKENDS))}"
         )
     return value
+
+
+def load_tmux_viewer(path: Path | None = None) -> str:
+    """``[terminal.tmux] viewer`` from ``config.toml`` (AD5) - which
+    terminal ``TmuxBackend`` spawns running ``tmux attach``. Defaults to
+    ``"ghostty"``, the backend's whole reason for existing; unrelated to
+    ``load_terminal_backend`` (env has no override for this - it's a
+    cosmetic choice, not something worth a second env var).
+    """
+    if path is None:
+        path = CONFIG_PATH
+    if not path.exists():
+        return DEFAULT_TMUX_VIEWER
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Invalid TOML in '{path}': {exc}") from exc
+    return data.get("terminal", {}).get("tmux", {}).get("viewer") or DEFAULT_TMUX_VIEWER
 
 
 @dataclass(frozen=True, slots=True)
