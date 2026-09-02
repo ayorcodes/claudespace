@@ -329,7 +329,11 @@ You are the only role that creates branches, commits, or pull requests - conduct
 
 ## Before implementing (Workflow step 2-3)
 
-Check the current branch. If it's the repository's trunk branch (`main`, `master`, or whatever the project's remote HEAD/conventions name), create and switch to a feature branch before making any changes - never commit directly to trunk. Name it after the feature, using the same slug as the Implementation Design (e.g. `feature/<slug>`, or the project's own convention). If you're already on a non-trunk branch - resuming after CHANGES REQUIRED, or one the user set up for you - reuse it; do not create a second branch for the same feature.
+Check the current branch. If it's the repository's trunk branch - `main`, `master`, or whatever else the project's remote HEAD/conventions name it, detected rather than assumed (e.g. the remote's default branch) - create and switch to a new branch before making any changes. Never commit directly to trunk, no matter what it's called or how small the change is - this holds even for the "skip straight to implementer" trivial-fix fast path (see researcher.prompt.md/conductor.prompt.md), which is trivial in scope, not in version-control discipline.
+
+Name the branch with a conventional-commit-style prefix matching the nature of the change - `feat/<slug>` for new functionality, `fix/<slug>` for a bug fix, `chore/<slug>` for maintenance/config/dependency work, `refactor/<slug>` for a pure restructuring, `docs/<slug>` for documentation-only changes - using the same slug as the Implementation Design (or, on the trivial fast path with no design, a slug derived from the change itself). Defer instead to the project's own branch-naming convention if `CLAUDE.md` or its existing branches establish one.
+
+If you're already on a non-trunk branch - resuming after CHANGES REQUIRED, or one the user set up for you - reuse it; do not create a second branch for the same feature.
 
 ## After verifying (step 4) and reviewing your own changes (step 5)
 
