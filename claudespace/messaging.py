@@ -38,22 +38,25 @@ advance the pipeline anyway.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
 import sys
 
-import iterm2
-
-from claudespace import iterm as iterm_ops
+from claudespace.backends import get_backend
+from claudespace.backends.base import Pane, TerminalBackend
 from claudespace.config import CANONICAL_PANES, get_template
 
 logger = logging.getLogger(__name__)
 
 
 async def _find_or_reveal(
-    app: iterm2.App, *, root: str, instance: str | None, sender_role: str, target_role: str
-) -> "iterm2.Session | None":
+    backend: TerminalBackend,
+    *,
+    root: str,
+    instance: str | None,
+    sender_role: str,
+    target_role: str,
+) -> Pane | None:
     """Locate ``target_role``'s pane, revealing it off ``sender_role``'s pane
     if the workspace hasn't launched it yet.
 
@@ -64,26 +67,21 @@ async def _find_or_reveal(
     located or created (unknown role, or the sender's own pane is gone too -
     nothing to split off of).
     """
-    existing = await iterm_ops.find_role_session(
-        app, marker=root, role=target_role, instance=instance
-    )
+    existing = await backend.find_role_pane(marker=root, role=target_role, instance=instance)
     if existing is not None:
         return existing
 
     if target_role not in CANONICAL_PANES:
         return None
 
-    template_name = await iterm_ops.get_template_name(app, marker=root, instance=instance)
+    template_name = await backend.get_template_name(marker=root, instance=instance)
     template = get_template(template_name) if template_name else get_template("agentic")
 
-    source = await iterm_ops.find_role_session(
-        app, marker=root, role=sender_role, instance=instance
-    )
+    source = await backend.find_role_pane(marker=root, role=sender_role, instance=instance)
     if source is None:
         return None
 
-    return await iterm_ops.reveal_role(
-        app,
+    return await backend.reveal_role(
         marker=root,
         instance=instance,
         root=root,
@@ -94,7 +92,7 @@ async def _find_or_reveal(
 
 
 async def _send(
-    connection: iterm2.Connection,
+    backend: TerminalBackend,
     *,
     root: str,
     instance: str | None,
@@ -102,9 +100,8 @@ async def _send(
     target_role: str,
     text: str,
 ) -> bool:
-    app = await iterm2.async_get_app(connection)
     destination = await _find_or_reveal(
-        app, root=root, instance=instance, sender_role=sender_role, target_role=target_role
+        backend, root=root, instance=instance, sender_role=sender_role, target_role=target_role
     )
     if destination is None:
         logger.error(
@@ -116,8 +113,8 @@ async def _send(
         return False
 
     prompt_text = f"[msg from {sender_role}] {text} "
-    await iterm_ops.send_role_prompt(target_role, destination, text=prompt_text, submit=True)
-    await iterm_ops.activate_session(destination)
+    await backend.send_role_prompt(target_role, destination, text=prompt_text, submit=True)
+    await backend.activate_pane(destination)
     logger.info("Sent message %s -> %s", sender_role, target_role)
     return True
 
@@ -127,11 +124,11 @@ def main() -> None:
 
     Reads the sender's own role/workspace from ``CLAUDESPACE_ROLE``/
     ``CLAUDESPACE_ROOT``/``CLAUDESPACE_INSTANCE`` (set on every claudespace
-    pane at launch - see ``iterm.py``'s ``_launch_pane``), exactly like
-    ``handoff.py``. Exits non-zero with a message on stderr if run outside a
-    claudespace pane or if the target role is unrecognized/unreachable, so a
-    role invoking this via Bash gets clear feedback rather than a silent
-    no-op.
+    pane at launch - see ``backends/common.py``'s ``launch_command_text``),
+    exactly like ``handoff.py``. Exits non-zero with a message on stderr if
+    run outside a claudespace pane or if the target role is
+    unrecognized/unreachable, so a role invoking this via Bash gets clear
+    feedback rather than a silent no-op.
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -166,17 +163,26 @@ def main() -> None:
         print("claudespace-msg: can't message your own role", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        sent = iterm2.run_until_complete(
-            lambda connection: _send(
-                connection,
+    sent = False
+
+    def _entrypoint(backend: TerminalBackend):
+        nonlocal sent
+
+        async def _run():
+            nonlocal sent
+            sent = await _send(
+                backend,
                 root=root,
                 instance=instance,
                 sender_role=sender_role,
                 target_role=args.role,
                 text=args.text,
             )
-        )
+
+        return _run()
+
+    try:
+        get_backend().run(_entrypoint)
     except Exception as exc:
         logger.exception("claudespace-msg failed")
         print(f"claudespace-msg: failed to send: {exc!r}", file=sys.stderr)

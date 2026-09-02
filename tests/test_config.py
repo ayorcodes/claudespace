@@ -14,6 +14,7 @@ from claudespace.config import (
     Template,
     ensure_agentic_template_seeded,
     ensure_native_template_seeded,
+    load_terminal_backend,
     load_user_templates,
     migrate_role_commands,
 )
@@ -120,3 +121,42 @@ class TestMigrateRoleCommands:
 
     def test_missing_file_is_a_no_op(self, tmp_path):
         assert migrate_role_commands(tmp_path / "nope.toml") is False
+
+
+class TestLoadTerminalBackend:
+    # AD5's selection matrix: unset -> iterm2, config.toml value, env
+    # override precedence over the file, invalid value -> named error.
+    def test_defaults_to_iterm2_when_nothing_is_configured(self, toml_path):
+        assert load_terminal_backend(toml_path, env={}) == "iterm2"
+
+    def test_reads_the_configured_value(self, toml_path):
+        toml_path.write_text('[terminal]\nbackend = "ghostty"\n')
+        assert load_terminal_backend(toml_path, env={}) == "ghostty"
+
+    def test_env_override_wins_over_the_file(self, toml_path):
+        toml_path.write_text('[terminal]\nbackend = "ghostty"\n')
+        assert (
+            load_terminal_backend(toml_path, env={"CLAUDESPACE_TERMINAL": "iterm2"})
+            == "iterm2"
+        )
+
+    def test_env_override_works_without_a_file(self, tmp_path):
+        assert (
+            load_terminal_backend(
+                tmp_path / "nope.toml", env={"CLAUDESPACE_TERMINAL": "ghostty"}
+            )
+            == "ghostty"
+        )
+
+    def test_unknown_value_in_the_file_is_a_named_error(self, toml_path):
+        toml_path.write_text('[terminal]\nbackend = "warp"\n')
+        with pytest.raises(ValueError, match="warp"):
+            load_terminal_backend(toml_path, env={})
+
+    def test_unknown_env_value_is_a_named_error(self, toml_path):
+        with pytest.raises(ValueError, match="warp"):
+            load_terminal_backend(toml_path, env={"CLAUDESPACE_TERMINAL": "warp"})
+
+    def test_missing_terminal_table_defaults_to_iterm2(self, toml_path):
+        toml_path.write_text('[templates.mine]\nlayout = "main_left_grid_right"\n')
+        assert load_terminal_backend(toml_path, env={}) == "iterm2"

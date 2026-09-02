@@ -53,3 +53,31 @@ def launch_iterm(*, timeout: float = 10.0) -> None:
         if is_iterm_running():
             return
         time.sleep(0.2)
+
+
+GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty"
+
+
+def is_ghostty_running() -> bool:
+    """Check whether Ghostty.app is currently running. Peer of
+    ``is_iterm_running`` for the Ghostty backend's own cold-launch handling
+    (see ``cli.py``)."""
+    result = subprocess.run(
+        ["pgrep", "-x", "Ghostty"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def launch_ghostty(*, timeout: float = 10.0) -> None:
+    """Launch Ghostty.app if it is not already running, and wait for it.
+    Peer of ``launch_iterm``; see its docstring for why ``open -b`` and a
+    poll loop are used instead of racing straight into automation."""
+    subprocess.run(["open", "-b", GHOSTTY_BUNDLE_ID], check=True)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if is_ghostty_running():
+            return
+        time.sleep(0.2)

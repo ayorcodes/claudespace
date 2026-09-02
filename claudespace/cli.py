@@ -7,23 +7,20 @@ import functools
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING
 
 from claudespace import (
     assets_sync,
-    connect,
     environment,
     update,
     utils,
     watchdog,
     workspace,
 )
+from claudespace.backends import get_backend
+from claudespace.backends.base import TerminalBackend
+from claudespace.backends.common import DEFAULT_MAX_ITEMS
 from claudespace.config import DEFAULT_TEMPLATE, get_template, list_templates
-from claudespace.iterm import DEFAULT_MAX_ITEMS
 from claudespace.watchdog import DEFAULT_INTERVAL_SECONDS, DEFAULT_STALL_AFTER_SECONDS
-
-if TYPE_CHECKING:
-    import iterm2
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +28,9 @@ logger = logging.getLogger(__name__)
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="claudespace",
-        description="Build or attach to an iTerm2 development workspace for a folder.",
+        description="Build or attach to a terminal development workspace for a "
+        "folder (iTerm2 by default; see 'terminal.backend' in "
+        "~/.config/claudespace/config.toml for the experimental Ghostty backend).",
     )
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser(
@@ -44,7 +43,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Check and repair everything claudespace needs: the claude CLI, "
         "iTerm2, and iTerm2's Python API. Run automatically by install.sh so "
         "the one-time setup happens at install time rather than partway "
-        "through your first real run.",
+        "through your first real run. Only checks the iTerm2 backend - the "
+        "Ghostty backend's own reachability check runs at build time instead "
+        "(see 'terminal.backend').",
     )
     doctor_parser.add_argument(
         "--yes",
@@ -91,7 +92,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_STALL_AFTER_SECONDS,
         help="Seconds of unchanged, non-idle screen output before a pane is "
-        f"flagged as possibly stalled (default: {DEFAULT_STALL_AFTER_SECONDS}).",
+        f"flagged as possibly stalled (default: {DEFAULT_STALL_AFTER_SECONDS}). "
+        "On the Ghostty backend, only crash/disappearance is detected - this "
+        "threshold is iTerm2-only (AD6).",
     )
     parser.add_argument(
         "--root",
@@ -160,7 +163,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(
-    connection: "iterm2.Connection",
+    backend: TerminalBackend,
     *,
     root: str,
     template: str,
@@ -169,10 +172,10 @@ async def _run(
     lazy: bool,
     think: bool,
     max_items: int,
-    just_launched_iterm: bool,
+    just_launched_terminal: bool,
 ) -> None:
     await workspace.open_workspace(
-        connection,
+        backend,
         root,
         template,
         force_new,
@@ -180,12 +183,12 @@ async def _run(
         lazy=lazy,
         think=think,
         max_items=max_items,
-        just_launched_iterm=just_launched_iterm,
+        just_launched_terminal=just_launched_terminal,
     )
 
 
 async def _run_watchdog(
-    connection: "iterm2.Connection", *, root: str, interval: float, stall_after: float
+    backend: TerminalBackend, *, root: str, interval: float, stall_after: float
 ) -> None:
     # No per-window instance UUID is available from a bare `claudespace
     # watchdog` invocation (that's only ever minted at `build_workspace`
@@ -193,12 +196,52 @@ async def _run_watchdog(
     # older-pane handling already relies on. Ambiguous only when two
     # windows are open against the same resolved root simultaneously.
     await watchdog.run_watchdog(
-        connection,
+        backend,
         root=os.path.abspath(os.path.expanduser(root)),
         instance=None,
         interval_seconds=interval,
         stall_after_seconds=stall_after,
     )
+
+
+def _resolve_backend() -> TerminalBackend:
+    """Resolve the configured terminal backend once, at CLI entry (AD5) -
+    everything downstream (workspace build, watchdog) is threaded this same
+    instance rather than re-resolving config independently.
+    """
+    try:
+        return get_backend()
+    except ValueError as exc:
+        logger.error(exc)
+        sys.exit(1)
+
+
+def _ensure_terminal_launched(backend: TerminalBackend) -> bool:
+    """Cold-launch the backend's terminal app if it isn't already running.
+
+    Returns whether we just launched it (``just_launched_terminal``, threaded
+    through to ``workspace.open_workspace`` so it knows whether the default
+    empty window it finds afterwards is stray chrome to clean up). Only the
+    iTerm2 path runs claudespace's own preflight checks (Python API
+    enablement etc, see ``environment.py``) - the Ghostty backend's own
+    reachability probe in ``GhosttyBackend.run`` covers the equivalent
+    ground for it (AC7).
+    """
+    from claudespace.backends.ghostty import GhosttyBackend
+
+    if isinstance(backend, GhosttyBackend):
+        was_running = utils.is_ghostty_running()
+        if not was_running:
+            logger.info("Ghostty is not running - launching it")
+            utils.launch_ghostty()
+        return not was_running
+
+    was_running = utils.is_iterm_running()
+    environment.ensure_environment(iterm_was_running=was_running)
+    if not was_running:
+        logger.info("iTerm2 is not running - launching it")
+        utils.launch_iterm()
+    return not was_running
 
 
 def main() -> None:
@@ -228,12 +271,16 @@ def main() -> None:
         return
 
     if args.command == "watchdog":
-        environment.ensure_environment(iterm_was_running=utils.is_iterm_running())
+        backend = _resolve_backend()
+        from claudespace.backends.iterm import ItermBackend
+
+        if isinstance(backend, ItermBackend):
+            environment.ensure_environment(iterm_was_running=utils.is_iterm_running())
         runner = functools.partial(
             _run_watchdog, root=args.root, interval=args.interval, stall_after=args.stall_after
         )
         try:
-            connect.run(runner)
+            backend.run(runner)
         except KeyboardInterrupt:
             return
         except Exception:
@@ -252,12 +299,8 @@ def main() -> None:
         logger.error(exc)
         sys.exit(1)
 
-    iterm_was_running = utils.is_iterm_running()
-    environment.ensure_environment(iterm_was_running=iterm_was_running)
-
-    if not iterm_was_running:
-        logger.info("iTerm2 is not running - launching it")
-        utils.launch_iterm()
+    backend = _resolve_backend()
+    just_launched_terminal = _ensure_terminal_launched(backend)
 
     runner = functools.partial(
         _run,
@@ -268,10 +311,10 @@ def main() -> None:
         lazy=args.lazy,
         think=args.think,
         max_items=args.max_items,
-        just_launched_iterm=not iterm_was_running,
+        just_launched_terminal=just_launched_terminal,
     )
     try:
-        connect.run(runner)
+        backend.run(runner)
     except Exception:
         logger.exception("Failed to build workspace for '%s'", args.root)
         sys.exit(1)

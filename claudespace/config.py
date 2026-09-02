@@ -22,12 +22,69 @@ written as its first entry.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# AD5: which terminal claudespace drives. No general config file existed
+# before Ghostty support - this is the first key in it. Absent file or key
+# defaults to iTerm2 (FR1/AC8), never a silent third option.
+CONFIG_PATH = Path.home() / ".config" / "claudespace" / "config.toml"
+DEFAULT_TERMINAL_BACKEND = "iterm2"
+KNOWN_TERMINAL_BACKENDS = frozenset({"iterm2", "ghostty"})
+
+
+def load_terminal_backend(
+    path: Path | None = None, *, env: dict[str, str] | None = None
+) -> str:
+    """Which terminal backend to use: ``CLAUDESPACE_TERMINAL`` env var (for
+    tests/one-offs - the Planning Brief forbids a per-command flag as the
+    primary UX, but an env override for testing is not that), else
+    ``config.toml``'s ``[terminal] backend``, else ``"iterm2"``.
+
+    Raises ``ValueError`` naming the bad value if either source names
+    something other than a known backend - a fast, named startup error
+    rather than a silent fallback (mirrors ``get_template``'s style).
+
+    ``path`` defaults to the module-level ``CONFIG_PATH`` - resolved here,
+    not as the parameter's default value, so tests can monkeypatch
+    ``config.CONFIG_PATH`` and have callers that pass no ``path`` (like
+    ``backends.get_backend``) pick it up.
+    """
+    if path is None:
+        path = CONFIG_PATH
+    env = os.environ if env is None else env
+
+    env_value = env.get("CLAUDESPACE_TERMINAL")
+    if env_value:
+        if env_value not in KNOWN_TERMINAL_BACKENDS:
+            raise ValueError(
+                f"Unknown CLAUDESPACE_TERMINAL '{env_value}'. Known backends: "
+                f"{', '.join(sorted(KNOWN_TERMINAL_BACKENDS))}"
+            )
+        return env_value
+
+    if not path.exists():
+        return DEFAULT_TERMINAL_BACKEND
+
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Invalid TOML in '{path}': {exc}") from exc
+
+    value = data.get("terminal", {}).get("backend")
+    if value is None:
+        return DEFAULT_TERMINAL_BACKEND
+    if value not in KNOWN_TERMINAL_BACKENDS:
+        raise ValueError(
+            f"Unknown terminal backend '{value}' in '{path}'. Known backends: "
+            f"{', '.join(sorted(KNOWN_TERMINAL_BACKENDS))}"
+        )
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +106,7 @@ class Template:
 
     ``entry_role`` is which role's pane is shown first in ``--lazy``
     workspaces - the only pane visible until it hands off to another role
-    (see ``iterm.build_workspace``). Ignored outside ``--lazy`` mode, where
+    (see each backend's ``build_workspace``). Ignored outside ``--lazy`` mode, where
     every pane in ``panes`` is launched immediately as today.
     """
 
@@ -73,7 +130,7 @@ DEFAULT_TEMPLATE = "native"
 # below are generated from it, so a user reading or editing that file sees
 # the real command rather than an opaque wrapper script.
 #
-# ``--append-system-prompt-file`` is deliberately absent - ``iterm.py``'s
+# ``--append-system-prompt-file`` is deliberately absent - ``backends/common.py``'s
 # ``_command_with_baked_persona`` appends it per pane, since only it knows
 # which role a given pane is.
 ROLE_COMMANDS: dict[str, str] = {
