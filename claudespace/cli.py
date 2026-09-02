@@ -236,6 +236,21 @@ def _print_restorable(entries: list[dict]) -> None:
         print(f"[{i}] {entry['session']}  root={entry['workspace']}  roles={roles}")
 
 
+def _read_line(prompt: str) -> str | None:
+    """``input(prompt)``, or ``None`` on Ctrl-C/Ctrl-D - the one place that
+    reads a line from the user in ``--restore``'s picker, so every prompt
+    it shows shares the same cancellation handling instead of each call
+    site having to remember its own try/except (a single-entry prompt
+    missing this exact guard, while a multi-entry one right next to it had
+    it, is what this factoring exists to make impossible again).
+    """
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+
 def _prompt_selection(entries: list[dict]) -> dict | None:
     """Ask which entry to attach to. Returns ``None`` if the user declined
     (blank input, Ctrl-C/Ctrl-D) or input isn't interactive - callers treat
@@ -244,13 +259,14 @@ def _prompt_selection(entries: list[dict]) -> dict | None:
     if not sys.stdin.isatty():
         return None
     if len(entries) == 1:
-        reply = input(f"Attach to {entries[0]['session']}? [Y/n] ").strip().lower()
-        return None if reply in ("n", "no") else entries[0]
-    try:
-        reply = input(f"Attach to which? [1-{len(entries)}, blank to skip] ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
+        reply = _read_line(f"Attach to {entries[0]['session']}? [Y/n] ")
+        if reply is None:
+            return None
+        return None if reply.strip().lower() in ("n", "no") else entries[0]
+    reply = _read_line(f"Attach to which? [1-{len(entries)}, blank to skip] ")
+    if reply is None:
         return None
+    reply = reply.strip()
     if not reply:
         return None
     try:

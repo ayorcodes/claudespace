@@ -124,7 +124,7 @@ class TestPromptSelection:
         monkeypatch.setattr("builtins.input", lambda _: "nope")
         assert cli._prompt_selection([ENTRY_A, ENTRY_B]) is None
 
-    def test_ctrl_c_returns_none(self, monkeypatch):
+    def test_ctrl_c_returns_none_multi_entry(self, monkeypatch):
         monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
 
         def _raise(_):
@@ -132,3 +132,24 @@ class TestPromptSelection:
 
         monkeypatch.setattr("builtins.input", _raise)
         assert cli._prompt_selection([ENTRY_A, ENTRY_B]) is None
+
+    def test_ctrl_c_returns_none_single_entry(self, monkeypatch):
+        # Regression guard: the single-entry [Y/n] prompt used to skip the
+        # try/except the multi-entry prompt had, so Ctrl-C there raised
+        # straight through instead of declining cleanly.
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+
+        def _raise(_):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("builtins.input", _raise)
+        assert cli._prompt_selection([ENTRY_A]) is None
+
+    def test_eof_returns_none_single_entry(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+
+        def _raise(_):
+            raise EOFError
+
+        monkeypatch.setattr("builtins.input", _raise)
+        assert cli._prompt_selection([ENTRY_A]) is None
