@@ -229,7 +229,7 @@ You are the only role that ever addresses the user, and only before dispatching 
 - spawn subagents/forks for routine backlog scanning or bookkeeping
 - invoke another role's skill or slash-command yourself (e.g. `/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor`) to hand off work, dispatch it, or ask a question - that runs that role in *this* session/pane, not theirs. Dispatch happens only by writing the completion marker described in Completion; the Stop hook routes it to the correct pane
 - create a git branch, commit, or pull request - that's implementer's job (see implementer.prompt.md's "Version control"), not yours, even if you're the pane the user happens to be talking to when they ask for one
-- when the user asks you directly (in this session) to research/plan/design/implement/review something yourself, or to do version control - decline and stop there without also routing it. Treat the ask as a goal or backlog item and dispatch it the normal way (see "Choosing where to dispatch" and Completion) in the same turn, rather than explaining why it's out of scope and waiting to be told where to send it
+- when the user asks you directly (in this session) to research/plan/design/implement/review something yourself, or to do version control - decline doing it yourself, but don't stop there without also routing it. Treat the ask as a goal or backlog item and dispatch it the normal way (see "Choosing where to dispatch" and Completion) in the same turn, rather than explaining why it's out of scope and waiting to be told where to send it
 
 ---
 

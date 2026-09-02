@@ -31,14 +31,32 @@ Whatever the case, the answering role's own ``.done`` must route back to
 whoever asked rather than falling through to its normal ``next_role`` - see
 ``alt_next_roles`` and the ``route:`` directive.
 
-``reviewer``'s ``alt_next_roles=("conductor",)`` is not a bounce but a
-*forward* success path under a conductor-driven run: PASS is normally
-terminal so a single-feature run always surfaces to the user, but under
-conductor it routes on so the next backlog item can dispatch. The same
-directive also covers reviewer handing conductor a brand-new goal after
-post-review findings span several roles - the marker content is then
-free-text, typed into conductor's pane exactly as a human-typed goal would
-be. That works even in a template with no conductor pane; see
+``alt_next_roles`` does double duty. Historically it only listed the roles a
+given stage might be *answering back* (the case above). It now lists every
+other role, full stop: any role can ``.done`` + ``route: <role>`` straight to
+any other role's pane whenever the work in front of it plainly needs that
+role's specialized operation and isn't a fit for its own documented
+``next_role``/bounce targets - a review request handed to a researcher, a
+design question that belongs with principal, a goal that spans multiple
+roles and belongs with conductor. This is what lets every pane hand work
+sideways to whichever specialist actually owns it, instead of either doing
+that work itself or dead-ending because the specific ask wasn't one of the
+few hardcoded paths a stage happened to enumerate. ``bounce_to`` stays
+deliberately narrower than the full role set - it encodes "who can answer a
+blocking question so I can finish my own artifact," a tighter relationship
+than "who could plausibly do this piece of work," and widening it
+indiscriminately would blur rejection/redo semantics that are genuinely
+role-specific (see the three cases above).
+
+``reviewer``'s original ``alt_next_roles=("conductor",)`` entry (still
+present) is not a bounce but a *forward* success path under a
+conductor-driven run: PASS is normally terminal so a single-feature run
+always surfaces to the user, but under conductor it routes on so the next
+backlog item can dispatch. The same directive also covers reviewer handing
+conductor a brand-new goal after post-review findings span several roles -
+the marker content is then free-text, typed into conductor's pane exactly as
+a human-typed goal would be. That works even in a template with no conductor
+pane, and so does every other now-reachable role; see
 ``handoff._reveal_destination``'s fallback via ``config.CANONICAL_PANES``.
 """
 
@@ -58,8 +76,10 @@ class Stage:
     ``bounce_to`` lists roles a ``.blocked`` may route back to; when more
     than one is listed the marker must pick via ``route: <role>``.
     ``alt_next_roles`` lists extra roles a ``.done`` may route to instead of
-    ``next_role`` - this is what lets a role answering a bounced question
-    reply to the specific asker.
+    ``next_role``: both a role answering a bounced question replying to the
+    specific asker, and any role handing work sideways to whichever other
+    role's specialized operation it actually needs (see the module
+    docstring). In practice this is every other role.
     """
 
     next_role: str | None
@@ -67,47 +87,60 @@ class Stage:
     alt_next_roles: tuple[str, ...] = ()
 
 
+# Every role's alt_next_roles below is "every other role" (self and
+# next_role omitted as redundant, except where a stage's comment says
+# otherwise) - see the module docstring's "alt_next_roles does double duty"
+# paragraph. bounce_to is left at its original, deliberately narrower set:
+# widening *that* would blur rejection/redo semantics that are genuinely
+# role-specific, and it wasn't the gap that motivated opening alt_next_roles
+# up in the first place.
 PIPELINE: dict[str, Stage] = {
     # Can skip ahead once it has investigated: straight to principal when
     # there are no open product questions, or straight to implementer for a
     # genuinely trivial change (a stricter bar - see researcher.prompt.md).
     # implementer can still bounce back up to principal if the change turns
     # out bigger than it looked. No bounce_to of its own: researcher is the
-    # investigative endpoint, with nothing upstream to ask. It does answer
-    # questions bounced *to* it by planner and principal, hence those in
-    # alt_next_roles alongside its own skip-ahead targets.
+    # investigative endpoint, with nothing upstream to ask.
     "researcher": Stage(
-        next_role="planner", alt_next_roles=("principal", "implementer", "planner")
+        next_role="planner",
+        alt_next_roles=("principal", "implementer", "reviewer", "conductor"),
     ),
-    # `route: principal` matches the default, so no alt entry is needed for
-    # answering principal. implementer is listed because it can bounce a
-    # product-scope question straight here and needs the answer back.
-    # planner may not investigate the repository itself (see its Never
-    # list), so a missing fact has nowhere to go but researcher.
     "planner": Stage(
-        next_role="principal", bounce_to=("researcher",), alt_next_roles=("implementer",)
+        next_role="principal",
+        bounce_to=("researcher",),
+        alt_next_roles=("researcher", "implementer", "reviewer", "conductor"),
     ),
-    # Rejects a whole Planning Brief back to planner, or asks researcher a
-    # narrow fact-finding question rather than re-investigating itself -
-    # two targets, so `route:` disambiguates.
     "principal": Stage(
         next_role="implementer",
         bounce_to=("planner", "researcher"),
-        alt_next_roles=("implementer",),
+        alt_next_roles=("researcher", "planner", "reviewer", "conductor"),
     ),
-    # Routes to whichever of principal/planner owns the question's domain.
-    # The same path carries a design request (see the module docstring).
-    "implementer": Stage(next_role="reviewer", bounce_to=("principal", "planner")),
+    "implementer": Stage(
+        next_role="reviewer",
+        bounce_to=("principal", "planner"),
+        alt_next_roles=("researcher", "planner", "principal", "conductor"),
+    ),
     # next_role=None so a single run never auto-advances past a human's
-    # blind spot; conductor is reachable via `route:` when a conductor-run
-    # marker is present. See reviewer.prompt.md's "On PASS".
-    "reviewer": Stage(next_role=None, bounce_to=("implementer",), alt_next_roles=("conductor",)),
+    # blind spot; conductor is reachable via `route:` regardless (a
+    # conductor-run marker being present is what tells reviewer's own prompt
+    # to prefer it on a plain PASS - see reviewer.prompt.md's "On PASS" -
+    # but the pipeline itself allows the route unconditionally, same as
+    # every other now-reachable role below).
+    "reviewer": Stage(
+        next_role=None,
+        bounce_to=("implementer",),
+        alt_next_roles=("conductor", "researcher", "planner", "principal", "implementer"),
+    ),
     # Owns backlog bookkeeping and dispatch only. Dispatching an item is
     # mechanically identical to a user starting a fresh /researcher run, so
     # researcher is the default. It may skip to principal or implementer for
     # an item it judges trivial - unlike researcher's skip, made without any
-    # investigation, which those roles' prompts compensate for.
-    "conductor": Stage(next_role="researcher", alt_next_roles=("principal", "implementer")),
+    # investigation, which those roles' prompts compensate for. No
+    # bounce_to: conductor dispatches and decomposes, it doesn't produce an
+    # artifact that could itself need someone else's answer to finish.
+    "conductor": Stage(
+        next_role="researcher", alt_next_roles=("principal", "implementer", "planner", "reviewer")
+    ),
 }
 
 

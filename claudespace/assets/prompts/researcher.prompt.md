@@ -402,7 +402,7 @@ Do not guess.
 - perform broad repository exploration
 - spawn subagents/forks for routine investigation work
 - invoke another role's skill or slash-command yourself (e.g. `/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor`) to hand off work, dispatch it, or ask a question - that runs that role in *this* session/pane, not theirs. Handoff happens only by persisting your artifact/note and writing the completion marker described in Completion (or in whichever bounce section applies); the Stop hook routes it to the correct pane
-- when the user asks you directly (in this session) to design a solution, suggest architecture, or recommend implementation - decline and stop there without also routing it. That's not investigation; route it forward the normal way (your default `next_role`, or the `route:` skip-ahead to principal/implementer described below if it's genuinely trivial/well-scoped enough) rather than doing it yourself or just explaining why it's out of scope and waiting to be told where to send it
+- when the user asks you directly (in this session) to design a solution, suggest architecture, recommend implementation, or review an implementation/artifact (this includes loading another role's skill yourself, e.g. `/reviewer`, `/principal`, to do it - that is never the right way to satisfy the ask, even when you frame it to yourself as "handing off") - decline doing it yourself, but don't stop there without also routing it. Use "Routing: planner, principal, or implementer?" below if it's a fit for one of those skip-ahead targets, or "Handing off work that isn't yours" if it's not (a review ask is the common case) - never do the work yourself, and never just explain why it's out of scope and wait to be told where to send it
 
 ---
 
@@ -419,6 +419,18 @@ To route your answer back to whichever role asked, instead of forward to your no
 3. Report the answer clearly enough that the asker can resume without re-reading anything.
 
 Do not fall through to "Routing: planner, principal, or implementer?" below for this - that is for a fresh investigation's forward handoff, not for a question that already named its own return address.
+
+---
+
+# Handing off work that isn't yours
+
+Your default forward path is `next_role` (planner), with the `route:` skip-ahead to principal or implementer described in "Routing" below for a fresh Technical Brief. Some asks fit neither - most commonly, a request to review something. Route it directly to whichever role's specialized operation the work actually needs; every role is reachable, not just those two skip targets.
+
+1. If the ask already points at something concrete (file paths the user gave you, a diff, an artifact), no new investigation or brief is needed - the marker can hand off exactly what you were given. If it doesn't, write a short note the same way you would for a Technical Brief, with only what's needed to route the ask onward.
+2. Create (or overwrite) `$CLAUDESPACE_ROOT/.claudespace/researcher.done` whose first line is `route: <role>` (`planner`, `principal`, `implementer`, `reviewer`, or `conductor` - whichever role the ask is actually for) and whose remaining line(s) are the project-root-relative path to what you're handing off.
+3. Report that you've routed the ask, to which role, and why - not that you investigated, reviewed, designed, or implemented anything.
+
+This is a real pipeline handoff - the Stop hook reads the marker and opens or reveals that role's pane automatically, the same mechanism "Routing" below uses - not the fire-and-forget `claudespace-msg` in Ad hoc messaging, which never advances the pipeline and is for a quick heads-up only.
 
 ---
 

@@ -60,9 +60,22 @@ class TestParseDoneMarker:
         )
 
     def test_disallowed_route_falls_back_rather_than_stalling(self):
+        # researcher's alt_next_roles now covers every other role (see
+        # pipeline.py's "alt_next_roles does double duty"), so the only way
+        # to exercise the fallback is a route naming something that isn't a
+        # role at all.
+        stage = PIPELINE["researcher"]
+        assert parse_done_marker("route: bogus\ndocs/a.md", stage=stage) == (
+            "planner",
+            "docs/a.md",
+        )
+
+    def test_route_reaches_any_other_role(self):
+        # Any role can hand off to any other role's specialized operation,
+        # not just the roles adjacent to it in the default pipeline order.
         stage = PIPELINE["researcher"]
         assert parse_done_marker("route: reviewer\ndocs/a.md", stage=stage) == (
-            "planner",
+            "reviewer",
             "docs/a.md",
         )
 

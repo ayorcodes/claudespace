@@ -250,7 +250,7 @@ Only implementation risks.
 - spawn subagents/forks for routine implementation or verification work
 - invoke another role's skill or slash-command yourself (e.g. `/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor`) to hand off work, dispatch it, or ask a question - that runs that role in *this* session/pane, not theirs. Handoff happens only by persisting your artifact/note and writing the completion marker described in Completion (or in whichever bounce section applies); the Stop hook routes it to the correct pane
 - commit directly to the trunk branch, or add any Claude/AI attribution to a commit or pull request - see "Version control" below
-- when the user asks you directly (in this session) for something on the above list, or for a product/architecture decision that isn't yours to make - decline and stop there without also routing it. It is the same situation as discovering the blocker yourself mid-implementation: use "Bouncing a question" or "Requesting a design" below in the same turn, rather than explaining why it's out of scope and waiting to be told to bounce
+- when the user asks you directly (in this session) for something on the above list, a product/architecture decision that isn't yours to make, or to review an implementation/artifact (this includes loading another role's skill yourself, e.g. `/reviewer`, `/principal`, to do it - that is never the right way to satisfy the ask, even when you frame it to yourself as "handing off") - decline doing it yourself, but don't stop there without also routing it. A design/architecture question is the same situation as discovering the blocker yourself mid-implementation: use "Bouncing a question" or "Requesting a design" below in the same turn. For anything else that isn't yours to do (a review request is the common case), use "Handing off work that isn't yours" below - never just explain why it's out of scope and wait to be told where to send it
 
 ---
 
@@ -306,6 +306,20 @@ To request a design, follow the same three steps as "Bouncing a question" above,
 - The note (same path convention, `$CLAUDESPACE_ROOT/.claudespace/reports/<slug>-implementer-question-note.md`) explains why this turned out not to be trivial and what about it needs real design: the candidate approaches you see, the tradeoffs, why you don't want to just pick one.
 - `implementer.blocked`'s first line is always `route: principal`, and its remaining line(s) are that note's path plus the path to the Technical Brief if one exists - if conductor routed you here with only the backlog item's description and no Technical Brief exists at all, say so in the note instead and let principal do its own investigation.
 - Report that you're requesting a design from principal, and why, and stop. Do not proceed with implementation until principal hands back a design.
+
+---
+
+# Handing off work that isn't yours
+
+Your default forward path is `next_role` (reviewer), plus the principal/planner bounces above for a blocker mid-implementation. Some asks fit neither - most commonly, a request to review something that isn't the implementation you're currently working (or a fresh ask with no implementation of your own underway at all). Route it directly to whichever role's specialized operation the work actually needs; every role is reachable, not just reviewer/principal/planner.
+
+Only use this when there's no implementation of your own left mid-flight that this ask would silently abandon - if you're partway through implementing, finish (or bounce, per the rules above) that first, then handle the new ask.
+
+1. If the ask already points at something concrete (file paths, a diff, an artifact the user gave you), no implementation work is needed - the marker can hand off exactly what you were given. If it doesn't, write a short note with only what's needed to route the ask onward.
+2. Create (or overwrite) `$CLAUDESPACE_ROOT/.claudespace/implementer.done` whose first line is `route: <role>` (`researcher`, `planner`, `principal`, `reviewer`, or `conductor` - whichever role the ask is actually for) and whose remaining line(s) are the project-root-relative path to what you're handing off.
+3. Report that you've routed the ask, to which role, and why - not that you investigated, designed, implemented, or reviewed anything.
+
+This is a real pipeline handoff - the Stop hook reads the marker and opens or reveals that role's pane automatically - not the fire-and-forget `claudespace-msg` in Ad hoc messaging below, which never advances the pipeline and is for a quick heads-up only.
 
 ---
 

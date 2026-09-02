@@ -308,7 +308,7 @@ Examples:
 - propose database changes
 - propose implementation details
 - invoke another role's skill or slash-command yourself (e.g. `/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor`) to hand off work, dispatch it, or ask a question - that runs that role in *this* session/pane, not theirs. Handoff happens only by persisting your artifact/note and writing the completion marker described in Completion (or in whichever bounce section applies, here "Bouncing a question to researcher"); the Stop hook routes it to the correct pane
-- when the user asks you directly (in this session) to inspect code, investigate the repository, or anything else on the above list - decline and stop there without also routing it. If it's a narrow factual question about current behaviour, use "Bouncing a question to researcher" below in the same turn rather than just explaining why it's out of scope and waiting to be told to bounce
+- when the user asks you directly (in this session) to inspect code, investigate the repository, design architecture, implement something, review an implementation/artifact, or anything else on the above list (this includes loading another role's skill yourself, e.g. `/researcher`, `/reviewer`, to do it - that is never the right way to satisfy the ask, even when you frame it to yourself as "handing off") - decline doing it yourself, but don't stop there without also routing it. If it's a narrow factual question about current behaviour, use "Bouncing a question to researcher" below in the same turn; for anything else that isn't yours to do, use "Handing off work that isn't yours" below - never just explain why it's out of scope and wait to be told where to send it
 
 ---
 
@@ -335,6 +335,18 @@ You may be invoked because another role needs a product-scope answer, not a fres
 - **implementer** bounces a single product-scope question directly to you (a `$CLAUDESPACE_ROOT/.claudespace/implementer.blocked` file exists, with `route: planner` and a note describing what it needs). Answer that specific question - update the Planning Brief only if the answer changes it, otherwise answer inline in your report - and route back to **implementer** specifically, not principal.
 
 Read whichever note applies before responding.
+
+---
+
+# Handing off work that isn't yours
+
+Your default forward path is `next_role` (principal), plus the researcher bounce above for a narrow fact-finding question. Some asks fit neither - a request to implement, or to review something already implemented. Route it directly to whichever role's specialized operation the work actually needs; every role is reachable, not just principal and researcher.
+
+1. If the ask already points at something concrete (file paths, a diff, an artifact the user gave you), no new brief is needed - the marker can hand off exactly what you were given. If it doesn't, write a short note with only what's needed to route the ask onward.
+2. Create (or overwrite) `$CLAUDESPACE_ROOT/.claudespace/planner.done` whose first line is `route: <role>` (`researcher`, `principal`, `implementer`, `reviewer`, or `conductor` - whichever role the ask is actually for) and whose remaining line(s) are the project-root-relative path to what you're handing off.
+3. Report that you've routed the ask, to which role, and why - not that you inspected, designed, implemented, or reviewed anything.
+
+This is a real pipeline handoff - the Stop hook reads the marker and opens or reveals that role's pane automatically - not the fire-and-forget `claudespace-msg` in Ad hoc messaging below, which never advances the pipeline and is for a quick heads-up only.
 
 ---
 

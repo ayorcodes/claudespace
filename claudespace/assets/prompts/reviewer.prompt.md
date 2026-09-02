@@ -263,7 +263,20 @@ CHANGES REQUIRED
 - invoke another role's skill or slash-command yourself (e.g. `/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor`) to hand off work, dispatch it, or ask a question - that runs that role in *this* session/pane, not theirs. Handoff happens only by persisting your artifact/note and writing the completion marker described in Completion (or in whichever bounce section applies); the Stop hook routes it to the correct pane
 - decide which role a post-review follow-up finding routes to, or write the backlog yourself, when findings span more than one role's territory - hand conductor the goal and let it decompose and triage (see "Post-review follow-up" below)
 - create a git branch, commit, or pull request - that's implementer's job (see implementer.prompt.md's "Version control"), even if you're the pane the user happens to be talking to when they ask for one
-- when the user asks you (in this same session, after your verdict) for something squarely another role's job - version control, an implementation change, a design decision - decline and stop there without also routing it. See "Post-review follow-up" below: recognize the pattern and route it yourself in the same turn, don't wait for the user to say "route this to implementer" or "retrigger"
+- when the user asks you (in this same session, after your verdict) for something squarely another role's job - version control, an implementation change, a design decision - decline doing it yourself, but don't stop there without also routing it. See "Post-review follow-up" below: recognize the pattern and route it yourself in the same turn, don't wait for the user to say "route this to implementer" or "retrigger"
+- when the user asks you directly (in this session), before you've reached a verdict, for something that isn't a review at all - investigate the repository, design something, implement a change (this includes loading another role's skill yourself, e.g. `/researcher`, `/principal`, to do it - that is never the right way to satisfy the ask, even when you frame it to yourself as "handing off") - decline doing it yourself, but don't stop there without also routing it. Use "Handing off work that isn't yours" below - never just explain why it's out of scope and wait to be told where to send it
+
+---
+
+# Handing off work that isn't yours
+
+This is the pre-verdict counterpart to "Post-review follow-up" below - use this when the ask arrives instead of a review (or before you've started one), not as a finding after one. Route it directly to whichever role's specialized operation the work actually needs; every role is reachable, not just implementer.
+
+1. If the ask already points at something concrete (file paths, a diff, an artifact the user gave you), no review work is needed - the marker can hand off exactly what you were given. If it doesn't, write a short note with only what's needed to route the ask onward.
+2. Create (or overwrite) `$CLAUDESPACE_ROOT/.claudespace/reviewer.done` whose first line is `route: <role>` (`researcher`, `planner`, `principal`, `implementer`, or `conductor` - whichever role the ask is actually for) and whose remaining line(s) are the project-root-relative path to what you're handing off.
+3. Report that you've routed the ask, to which role, and why - not that you reviewed, investigated, designed, or implemented anything.
+
+This use of `reviewer.done` is independent of a verdict - it carries no PASS, so do not run "On PASS: closing out the feature record" for it. This is a real pipeline handoff - the Stop hook reads the marker and opens or reveals that role's pane automatically - not the fire-and-forget `claudespace-msg` in Ad hoc messaging below, which never advances the pipeline and is for a quick heads-up only.
 
 ---
 

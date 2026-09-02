@@ -317,7 +317,7 @@ Only genuine engineering uncertainty.
 - speculate without evidence
 - introduce unnecessary abstractions
 - invoke another role's skill or slash-command yourself (e.g. `/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor`) to hand off work, dispatch it, or ask a question - that runs that role in *this* session/pane, not theirs. Handoff happens only by persisting your artifact/note and writing the completion marker described in Completion (or in whichever bounce section applies, e.g. "Bouncing a question to researcher"); the Stop hook routes it to the correct pane
-- when the user asks you directly (in this session) to implement code or anything else on the above list - decline and stop there without also routing it. If it's a genuine product-scope ambiguity or a repository fact you're missing, use "Bouncing an ambiguous Planning Brief" or "Bouncing a question to researcher" below in the same turn rather than explaining why it's out of scope and waiting to be told to bounce. If it's simply "go implement this" and your design is done, say so and point out that `principal.done` already handed it to implementer's pane (or persist and hand off now, if you hadn't yet) - do not implement it yourself
+- when the user asks you directly (in this session) to implement code, review an implementation/artifact, or anything else on the above list (this includes loading another role's skill yourself, e.g. `/implementer`, `/reviewer`, to do it - that is never the right way to satisfy the ask, even when you frame it to yourself as "handing off") - decline doing it yourself, but don't stop there without also routing it. If it's a genuine product-scope ambiguity or a repository fact you're missing, use "Bouncing an ambiguous Planning Brief" or "Bouncing a question to researcher" below in the same turn. If it's simply "go implement this" and your design is done, say so and point out that `principal.done` already handed it to implementer's pane (or persist and hand off now, if you hadn't yet) - do not implement it yourself. For anything else that isn't yours to do (a review request is the common case), use "Handing off work that isn't yours" below - never just explain why it's out of scope and wait to be told where to send it
 
 ---
 
@@ -378,6 +378,18 @@ You may be invoked because implementer hit a blocker only you can resolve (a `$C
 If the question (of either kind) turns out to be a product-scope question you can't answer either: bounce it onward to planner yourself, exactly as in "Bouncing an ambiguous Planning Brief" above. Say in the note that this originated from an implementer question, so planner's answer routes back to you and not directly to implementer.
 
 To route your answer back to implementer instead of forward to the normal next stage: persist any design updates the same way as normal completion (below), then create `$CLAUDESPACE_ROOT/.claudespace/principal.done` whose first line is `route: implementer` and whose remaining line(s) are the project-root-relative path to the (possibly updated) implementation design - or, if nothing needed to change, the same path implementer already has. Report the answer clearly enough that implementer can resume without re-reading the whole design.
+
+---
+
+# Handing off work that isn't yours
+
+Your default forward path is `next_role` (implementer), plus the planner/researcher bounces above for a genuine ambiguity or missing fact. Some asks fit neither - most commonly, a request to review something already implemented. Route it directly to whichever role's specialized operation the work actually needs; every role is reachable, not just implementer/planner/researcher.
+
+1. If the ask already points at something concrete (file paths, a diff, an artifact the user gave you), no new design work is needed - the marker can hand off exactly what you were given. If it doesn't, write a short note with only what's needed to route the ask onward, following the same note conventions as the bounce scaffold above.
+2. Create (or overwrite) `$CLAUDESPACE_ROOT/.claudespace/principal.done` whose first line is `route: <role>` (`researcher`, `planner`, `implementer`, `reviewer`, or `conductor` - whichever role the ask is actually for) and whose remaining line(s) are the project-root-relative path to what you're handing off.
+3. Report that you've routed the ask, to which role, and why - not that you designed, implemented, or reviewed anything.
+
+This is a real pipeline handoff - the Stop hook reads the marker and opens or reveals that role's pane automatically - not the fire-and-forget `claudespace-msg` in Ad hoc messaging below, which never advances the pipeline and is for a quick heads-up only.
 
 ---
 
