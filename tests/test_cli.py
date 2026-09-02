@@ -78,3 +78,57 @@ class TestRestoreFlag:
     def test_restore_flag_can_be_set(self):
         args = cli._build_parser().parse_args(["--restore"])
         assert args.restore is True
+
+
+ENTRY_A = {"session": "cs-aaa", "workspace": "/root/a", "instance": "i1", "roles": ["researcher"]}
+ENTRY_B = {"session": "cs-bbb", "workspace": "/root/b", "instance": "i2", "roles": ["planner"]}
+
+
+class TestPromptSelection:
+    def test_non_interactive_returns_none_without_prompting(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+        assert cli._prompt_selection([ENTRY_A]) is None
+
+    def test_single_entry_yes_selects_it(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        assert cli._prompt_selection([ENTRY_A]) == ENTRY_A
+
+    def test_single_entry_blank_defaults_to_yes(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "")
+        assert cli._prompt_selection([ENTRY_A]) == ENTRY_A
+
+    def test_single_entry_no_declines(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        assert cli._prompt_selection([ENTRY_A]) is None
+
+    def test_multiple_entries_picks_by_number(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "2")
+        assert cli._prompt_selection([ENTRY_A, ENTRY_B]) == ENTRY_B
+
+    def test_multiple_entries_blank_skips(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "")
+        assert cli._prompt_selection([ENTRY_A, ENTRY_B]) is None
+
+    def test_multiple_entries_out_of_range_returns_none(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "99")
+        assert cli._prompt_selection([ENTRY_A, ENTRY_B]) is None
+
+    def test_multiple_entries_non_numeric_returns_none(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "nope")
+        assert cli._prompt_selection([ENTRY_A, ENTRY_B]) is None
+
+    def test_ctrl_c_returns_none(self, monkeypatch):
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+
+        def _raise(_):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("builtins.input", _raise)
+        assert cli._prompt_selection([ENTRY_A, ENTRY_B]) is None

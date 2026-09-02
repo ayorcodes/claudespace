@@ -187,11 +187,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--restore",
         action="store_true",
         help="tmux backend only: list every restorable/running tmux-backed "
-        "workspace (session, root folder, roles present) and exit - "
-        "waits briefly for an in-flight autorestore first, same as a "
-        "normal attach. Doesn't attach anything itself; run 'claudespace "
-        "--tmux --root <dir>' (or 'tmux -L claudespace attach -t "
-        "<session>') against whichever one you want.",
+        "workspace (session, root folder, roles present) - waits briefly "
+        "for an in-flight autorestore first, same as a normal attach - "
+        "then prompts which one to attach to. Non-interactive (piped/no "
+        "tty) just lists them and exits without prompting.",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging."
@@ -224,40 +223,80 @@ async def _run(
     )
 
 
-async def _list_restorable(backend: TerminalBackend) -> None:
+async def _fetch_restorable(backend: TerminalBackend, out: list) -> None:
     from claudespace.backends.tmux import TmuxBackend
 
     assert isinstance(backend, TmuxBackend)  # guarded by the caller
-    entries = await backend.list_all_workspaces()
-    if not entries:
-        print("No claudespace tmux sessions found.")
-        return
-    for entry in entries:
+    out.extend(await backend.list_all_workspaces())
+
+
+def _print_restorable(entries: list[dict]) -> None:
+    for i, entry in enumerate(entries, start=1):
         roles = ", ".join(entry["roles"]) or "(none tagged)"
-        print(f"{entry['session']}  root={entry['workspace']}  roles={roles}")
-    print()
-    print("Attach with: claudespace --tmux --root <root>")
-    print("         or: tmux -L claudespace attach -t <session>")
+        print(f"[{i}] {entry['session']}  root={entry['workspace']}  roles={roles}")
+
+
+def _prompt_selection(entries: list[dict]) -> dict | None:
+    """Ask which entry to attach to. Returns ``None`` if the user declined
+    (blank input, Ctrl-C/Ctrl-D) or input isn't interactive - callers treat
+    that as "just list them, attach nothing" rather than guessing.
+    """
+    if not sys.stdin.isatty():
+        return None
+    if len(entries) == 1:
+        reply = input(f"Attach to {entries[0]['session']}? [Y/n] ").strip().lower()
+        return None if reply in ("n", "no") else entries[0]
+    try:
+        reply = input(f"Attach to which? [1-{len(entries)}, blank to skip] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if not reply:
+        return None
+    try:
+        index = int(reply)
+    except ValueError:
+        print(f"Not a number: {reply!r}")
+        return None
+    if not (1 <= index <= len(entries)):
+        print(f"Out of range: {index}")
+        return None
+    return entries[index - 1]
 
 
 def _run_restore_listing() -> None:
     """``claudespace --restore``: list every tmux-backed session found
     (waiting briefly for an in-flight autorestore first, same as a normal
-    attach), then exit - doesn't attach anything itself.
+    attach), then - interactively - attach to whichever one is picked.
     """
     from claudespace.backends.tmux import TmuxBackend
 
     persist, persist_interval_minutes = load_tmux_persistence()
+    viewer = load_tmux_viewer()
     backend = TmuxBackend(
-        viewer=load_tmux_viewer(),
-        persist=persist,
-        persist_interval_minutes=persist_interval_minutes,
+        viewer=viewer, persist=persist, persist_interval_minutes=persist_interval_minutes
     )
+    entries: list[dict] = []
     try:
-        backend.run(_list_restorable)
+        backend.run(functools.partial(_fetch_restorable, out=entries))
     except Exception:
         logger.exception("Failed to list restorable tmux sessions")
         sys.exit(1)
+
+    if not entries:
+        print("No claudespace tmux sessions found.")
+        return
+
+    _print_restorable(entries)
+    chosen = _prompt_selection(entries)
+    if chosen is None:
+        print()
+        print("Attach with: claudespace --tmux --root <root>")
+        print("         or: tmux -L claudespace attach -t <session>")
+        return
+
+    logger.info("Attaching to %s...", chosen["session"])
+    utils.launch_viewer(chosen["session"], viewer=viewer)
 
 
 async def _run_watchdog(

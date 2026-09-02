@@ -91,7 +91,7 @@ claudespace --list-templates     # show available templates
 
 claudespace --manual             # fully supervised: no auto-submit handoffs, no autonomous decisions
 claudespace --lazy               # start with one pane; others appear as work reaches them
-claudespace --restore            # list restorable/running tmux-backed sessions (tmux backend only)
+claudespace --restore            # list tmux-backed sessions and pick one to attach to
 ```
 
 Autonomous mode (roles decide open questions themselves instead of asking
