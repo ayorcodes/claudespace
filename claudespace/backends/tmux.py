@@ -268,6 +268,16 @@ class TmuxBackend(TerminalBackend):
         await tmux_cli.set_session_option(session, "pane-border-status", "top")
         await tmux_cli.set_session_option(session, "pane-border-format", "#{pane_title}")
 
+        # `mouse` is off by default in stock tmux, so clicking a pane does
+        # nothing - the only way to switch is the prefix key, which is not
+        # how iTerm2 users expect pane switching to work. `focus-events`
+        # (also off by default) is what lets the program running inside a
+        # pane (claude's TUI included) know when it gains/loses focus at
+        # all - without it every pane looks permanently unfocused to the
+        # app inside, regardless of which one is actually active.
+        await tmux_cli.set_session_option(session, "mouse", "on")
+        await tmux_cli.set_session_option(session, "focus-events", "on")
+
         if lazy:
             entry_pane_cfg = next(p for p in template.panes if p.role == template.entry_role)
             await self._launch_pane(

@@ -97,7 +97,12 @@ def launch_viewer(session: str, *, viewer: str = "ghostty") -> None:
             f"Unknown tmux viewer '{viewer}'. Known viewers: "
             f"{', '.join(sorted(_VIEWER_BUNDLE_IDS))}"
         )
+    # `-e` takes the command and its own arguments as separate argv words
+    # (like execve), not one shell-style string - passing
+    # "tmux attach -t <session>" as a single argument makes the terminal
+    # look for a literal binary named that whole string and fail with
+    # "No such file or directory".
     subprocess.run(
-        ["open", "-b", bundle_id, "-n", "--args", "-e", f"tmux attach -t {session}"],
+        ["open", "-b", bundle_id, "-n", "--args", "-e", "tmux", "attach", "-t", session],
         check=True,
     )
