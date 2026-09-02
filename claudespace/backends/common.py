@@ -113,6 +113,7 @@ def launch_command_text(
     think: bool,
     max_items: int,
     command: str,
+    backend_name: str,
     banner: str = "",
 ) -> str:
     """The full shell command a pane runs at launch: cd, env exports, an
@@ -124,6 +125,19 @@ def launch_command_text(
     original launch root; ``resolve_root`` follows a run-scoped worktree
     marker if one has been created since, same as every other marker-path
     lookup in the codebase.
+
+    ``CLAUDESPACE_TERMINAL=<backend_name>`` matters more than it looks:
+    ``claudespace-handoff``/``claudespace-msg`` run as their *own* process
+    later, from inside this pane, and resolve their own backend from
+    scratch via ``config.load_terminal_backend`` (env var, then
+    ``config.toml``, else iTerm2) - they have no way to see how the CLI
+    that built this workspace chose its backend (``--tmux``, in
+    particular, is a flag local to that one invocation and never reaches
+    here otherwise). Without this, a workspace built via ``--tmux`` alone
+    (no ``config.toml``) has every handoff silently resolve back to
+    iTerm2, fail to find iTerm2 even running, and exit before printing
+    anything a Stop hook's caller would see - a handoff that looks like it
+    just does nothing.
     """
     effective_root = resolve_root(root)
     return (
@@ -131,7 +145,8 @@ def launch_command_text(
         f"export CLAUDESPACE_ROLE={role} && "
         f"export CLAUDESPACE_INSTANCE={instance} && "
         f"export CLAUDESPACE_MAX_ITEMS={max_items} && "
-        f"export CLAUDESPACE_THINK={int(think)} && {banner}{command}\n"
+        f"export CLAUDESPACE_THINK={int(think)} && "
+        f"export CLAUDESPACE_TERMINAL={backend_name} && {banner}{command}\n"
     )
 
 

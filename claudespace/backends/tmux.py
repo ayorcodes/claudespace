@@ -116,6 +116,13 @@ class TmuxWindow:
 class TmuxBackend(TerminalBackend):
     """``TerminalBackend`` implementation driving a detached tmux server."""
 
+    # See ItermBackend.BACKEND_NAME's docstring - exported into every
+    # pane's environment so a later claudespace-handoff/claudespace-msg
+    # process (its own separate invocation, with no visibility into how
+    # this workspace's own `claudespace --tmux`/config.toml resolved its
+    # backend) resolves the same one.
+    BACKEND_NAME = "tmux"
+
     def __init__(self, *, viewer: str = "ghostty") -> None:
         self._viewer = viewer
 
@@ -201,6 +208,7 @@ class TmuxBackend(TerminalBackend):
             think=think,
             max_items=max_items,
             command=command,
+            backend_name=self.BACKEND_NAME,
             banner=banner,
         )
         # send-keys -l types literally and never submits on its own; the

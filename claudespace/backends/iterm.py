@@ -336,6 +336,7 @@ async def _launch_pane(
         think=think,
         max_items=max_items,
         command=command,
+        backend_name=ItermBackend.BACKEND_NAME,
         banner=banner,
     )
     await session.async_send_text(text)
@@ -489,6 +490,13 @@ def _screen_signature(session_contents: "iterm2.ScreenContents") -> tuple[str, b
 
 class ItermBackend(TerminalBackend):
     """``TerminalBackend`` implementation driving iTerm2's Python API."""
+
+    # The value ``config.load_terminal_backend`` (and ``CLAUDESPACE_TERMINAL``)
+    # recognize for this backend - exported into every launched pane's
+    # environment (see ``_launch_pane``) so a later ``claudespace-handoff``/
+    # ``claudespace-msg`` process resolves the same backend this workspace
+    # was actually built with.
+    BACKEND_NAME = "iterm2"
 
     def __init__(self) -> None:
         self._connection: iterm2.Connection | None = None
