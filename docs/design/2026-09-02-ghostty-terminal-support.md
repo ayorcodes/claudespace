@@ -1,5 +1,7 @@
 # Ghostty Terminal Support (via a tmux backend) — Implementation Design
 
+Status: implemented
+
 ## References
 
 - Planning Brief: `docs/planning/2026-09-02-ghostty-terminal-support.md` (tmux-backed revision)

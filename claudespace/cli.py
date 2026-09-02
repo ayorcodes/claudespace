@@ -29,8 +29,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="claudespace",
         description="Build or attach to a terminal development workspace for a "
-        "folder (iTerm2 by default; see 'terminal.backend' in "
-        "~/.config/claudespace/config.toml for the tmux backend, the "
+        "folder (iTerm2 by default; pass --tmux, or set 'terminal.backend' "
+        "in ~/.config/claudespace/config.toml, for the tmux backend - the "
         "supported way to run claudespace in Ghostty).",
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -96,6 +96,13 @@ def _build_parser() -> argparse.ArgumentParser:
         f"flagged as possibly stalled (default: {DEFAULT_STALL_AFTER_SECONDS}). "
         "Applies identically on the iTerm2 and tmux backends (AD6).",
     )
+    watchdog_parser.add_argument(
+        "--tmux",
+        action="store_true",
+        help="Watch a tmux-backed workspace instead of the default iTerm2 "
+        "one. Same effect as [terminal] backend = \"tmux\" in "
+        "~/.config/claudespace/config.toml, for this invocation only.",
+    )
     parser.add_argument(
         "--root",
         default=os.getcwd(),
@@ -152,6 +159,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "conductor pane (e.g. 'native').",
     )
     parser.add_argument(
+        "--tmux",
+        action="store_true",
+        help="Use the tmux backend for this run instead of the default "
+        "iTerm2 (the supported way to run claudespace in Ghostty). Same "
+        "effect as [terminal] backend = \"tmux\" in "
+        "~/.config/claudespace/config.toml, for this invocation only - "
+        "iTerm2 stays the default when this is omitted.",
+    )
+    parser.add_argument(
         "--list-templates",
         action="store_true",
         help="List available template names and exit.",
@@ -204,13 +220,18 @@ async def _run_watchdog(
     )
 
 
-def _resolve_backend() -> TerminalBackend:
+def _resolve_backend(*, force_tmux: bool = False) -> TerminalBackend:
     """Resolve the configured terminal backend once, at CLI entry (AD5) -
     everything downstream (workspace build, watchdog) is threaded this same
     instance rather than re-resolving config independently.
+
+    ``--tmux`` (``force_tmux``) overrides config/env for this invocation
+    only, the same way ``CLAUDESPACE_TERMINAL`` does - iTerm2 remains the
+    default and the config-file selection is still what a plain
+    ``claudespace`` (no flag) uses.
     """
     try:
-        return get_backend()
+        return get_backend("tmux" if force_tmux else None)
     except ValueError as exc:
         logger.error(exc)
         sys.exit(1)
@@ -270,7 +291,7 @@ def main() -> None:
         return
 
     if args.command == "watchdog":
-        backend = _resolve_backend()
+        backend = _resolve_backend(force_tmux=args.tmux)
         from claudespace.backends.iterm import ItermBackend
 
         if isinstance(backend, ItermBackend):
@@ -298,7 +319,7 @@ def main() -> None:
         logger.error(exc)
         sys.exit(1)
 
-    backend = _resolve_backend()
+    backend = _resolve_backend(force_tmux=args.tmux)
     just_launched_terminal = _ensure_terminal_launched(backend)
 
     runner = functools.partial(

@@ -536,8 +536,14 @@ a detached tmux session and opens Ghostty attached to it, rather than
 driving Ghostty's own (preview-status) scripting API directly. That gives
 full parity with the iTerm2 experience — confirmed prompt delivery and
 full-fidelity stall detection both need tmux's `capture-pane`, which
-Ghostty's own automation surface doesn't yet expose. Switch by creating
-`~/.config/claudespace/config.toml`:
+Ghostty's own automation surface doesn't yet expose. Turn it on per-run with
+`--tmux`:
+
+```
+claudespace --tmux
+```
+
+or make it the default by creating `~/.config/claudespace/config.toml`:
 
 ```toml
 [terminal]
@@ -547,7 +553,9 @@ backend = "tmux"      # or "iterm2" (the default)
 viewer = "ghostty"    # which terminal hosts `tmux attach`; default "ghostty"
 ```
 
-Requires `tmux` on `PATH` (`brew install tmux`). Everything works the same
+`--tmux` overrides the config file for that one invocation; without it,
+iTerm2 stays the default. `claudespace watchdog --tmux` follows the same
+rule. Requires `tmux` on `PATH` (`brew install tmux`). Everything works the same
 as on iTerm2 — workspace layout, confirmed prompt delivery, role handoff,
 `claudespace-msg`, and full-fidelity `claudespace watchdog` all run against
 whichever backend is configured. Because the tmux session is detached from
