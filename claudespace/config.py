@@ -107,6 +107,38 @@ def load_tmux_viewer(path: Path | None = None) -> str:
     return data.get("terminal", {}).get("tmux", {}).get("viewer") or DEFAULT_TMUX_VIEWER
 
 
+DEFAULT_TMUX_PERSIST = True
+DEFAULT_TMUX_PERSIST_INTERVAL_MINUTES = 15
+
+
+def load_tmux_persistence(path: Path | None = None) -> tuple[bool, int]:
+    """``(persist, persist_interval_minutes)`` from ``[terminal.tmux]`` in
+    ``config.toml`` (Increment 2, AD12) - whether the tmux backend loads
+    tmux-resurrect/tmux-continuum on its private socket, and how often
+    continuum autosaves. Defaults to on, every 15 minutes: negligible risk
+    on a socket the user's own tmux never touches (AD8), and durability
+    across a reboot is exactly what this was built for.
+
+    ``persist = false`` is the documented off-switch - live (Increment 1)
+    behavior is then unchanged, since ``TmuxBackend`` doesn't even write a
+    private config in that case (see ``backends/tmux_persist.write_conf``).
+    """
+    if path is None:
+        path = CONFIG_PATH
+    if not path.exists():
+        return DEFAULT_TMUX_PERSIST, DEFAULT_TMUX_PERSIST_INTERVAL_MINUTES
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Invalid TOML in '{path}': {exc}") from exc
+    tmux_table = data.get("terminal", {}).get("tmux", {})
+    persist = tmux_table.get("persist")
+    if persist is None:
+        persist = DEFAULT_TMUX_PERSIST
+    interval = tmux_table.get("persist_interval_minutes", DEFAULT_TMUX_PERSIST_INTERVAL_MINUTES)
+    return bool(persist), int(interval)
+
+
 @dataclass(frozen=True, slots=True)
 class PaneConfig:
     """A single pane's identity and startup command.

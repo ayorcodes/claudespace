@@ -17,7 +17,7 @@ from claudespace.backends.base import BackendUnavailableError
 
 
 @pytest.fixture(autouse=True)
-def _isolated_tmux_server(monkeypatch):
+def _isolated_tmux_server(monkeypatch, tmp_path):
     # A dedicated TMUX_TMPDIR gives this test module its own tmux server
     # socket directory, isolated from any tmux server already running on
     # the machine (the user's own session, or another test run). Uses a
@@ -26,6 +26,14 @@ def _isolated_tmux_server(monkeypatch):
     # macOS), and pytest's per-test nested tmp_path routinely blows that.
     socket_dir = tempfile.mkdtemp(prefix="cstmux-")
     monkeypatch.setenv("TMUX_TMPDIR", socket_dir)
+    # Every call is now prefixed with -L claudespace (AD8) and, if a
+    # private conf exists, -f <it> (Increment 2) - pin that to "absent" so
+    # plain tmux_cli tests never depend on, or accidentally load, whatever
+    # this machine's own ~/.local/share/claudespace/tmux/ happens to hold.
+    # Dedicated persistence tests override this back to a real path.
+    monkeypatch.setattr(
+        "claudespace.backends.tmux_persist.CONF_PATH", tmp_path / "no-conf-here.conf"
+    )
     yield
     shutil.rmtree(socket_dir, ignore_errors=True)
 
@@ -59,13 +67,17 @@ class TestArgvShapes:
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         return calls
 
+    SOCKET_PREFIX = ("tmux", "-L", "claudespace")
+
     def test_send_keys_literal_uses_dash_l_and_double_dash(self, recorder):
         asyncio.run(tmux_cli.send_keys_literal("%1", "-not-a-flag"))
-        assert recorder[0] == ("tmux", "send-keys", "-t", "%1", "-l", "--", "-not-a-flag")
+        assert recorder[0] == self.SOCKET_PREFIX + (
+            "send-keys", "-t", "%1", "-l", "--", "-not-a-flag"
+        )
 
     def test_split_window_horizontal_flag_for_vertical_true(self, recorder):
         asyncio.run(tmux_cli.split_window("%1", vertical=True, session="s"))
-        assert recorder[0][:2] == ("tmux", "split-window")
+        assert recorder[0][: len(self.SOCKET_PREFIX) + 1] == self.SOCKET_PREFIX + ("split-window",)
         assert "-h" in recorder[0]
 
     def test_split_window_vertical_flag_for_vertical_false(self, recorder):
@@ -74,12 +86,11 @@ class TestArgvShapes:
 
     def test_capture_pane_joins_wrapped_lines(self, recorder):
         asyncio.run(tmux_cli.capture_pane("%1"))
-        assert recorder[0] == ("tmux", "capture-pane", "-p", "-J", "-t", "%1")
+        assert recorder[0] == self.SOCKET_PREFIX + ("capture-pane", "-p", "-J", "-t", "%1")
 
     def test_set_pane_option_targets_pane_scope(self, recorder):
         asyncio.run(tmux_cli.set_pane_option("%1", "@cs_role", "researcher"))
-        assert recorder[0] == (
-            "tmux",
+        assert recorder[0] == self.SOCKET_PREFIX + (
             "set-option",
             "-p",
             "-t",

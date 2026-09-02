@@ -16,9 +16,12 @@ from claudespace.config import PaneConfig, Template
 
 
 @pytest.fixture(autouse=True)
-def _isolated_tmux_server(monkeypatch):
+def _isolated_tmux_server(monkeypatch, tmp_path):
     socket_dir = tempfile.mkdtemp(prefix="cstmux-")
     monkeypatch.setenv("TMUX_TMPDIR", socket_dir)
+    monkeypatch.setattr(
+        "claudespace.backends.tmux_persist.CONF_PATH", tmp_path / "no-conf-here.conf"
+    )
     yield
     shutil.rmtree(socket_dir, ignore_errors=True)
 
@@ -65,7 +68,7 @@ def _marker(tmp_path) -> str:
 
 class TestBuildWorkspace:
     def test_eager_build_launches_every_pane(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -83,7 +86,7 @@ class TestBuildWorkspace:
         asyncio.run(_scenario())
 
     def test_lazy_build_launches_only_entry_role(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -104,7 +107,7 @@ class TestBuildWorkspace:
 
 class TestStateRoundTrip:
     def test_auto_handoff_lazy_and_template_persist(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -124,7 +127,7 @@ class TestStateRoundTrip:
         asyncio.run(_scenario())
 
     def test_run_doc_round_trips_and_stamps_every_pane(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -152,7 +155,7 @@ class TestStateRoundTrip:
 
 class TestFindAndReveal:
     def test_find_workspace_and_find_role_pane(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -176,7 +179,7 @@ class TestFindAndReveal:
         asyncio.run(_scenario())
 
     def test_reveal_role_splits_and_launches(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -209,7 +212,7 @@ class TestFindAndReveal:
         asyncio.run(_scenario())
 
     def test_instance_filter_distinguishes_two_windows_on_one_root(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -233,7 +236,7 @@ class TestFindAndReveal:
 
 class TestPromptDeliveryAndStall:
     def test_send_role_prompt_delivers_and_confirms_submission(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -260,7 +263,7 @@ class TestPromptDeliveryAndStall:
         asyncio.run(_scenario())
 
     def test_check_pane_stall_flags_a_dead_pane(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():
@@ -290,7 +293,7 @@ class TestPromptDeliveryAndStall:
         asyncio.run(_scenario())
 
     def test_check_pane_stall_never_flags_a_changing_screen(self, tmp_path):
-        backend = TmuxBackend()
+        backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)
 
         async def _scenario():

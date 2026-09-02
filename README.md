@@ -565,6 +565,38 @@ it. If tmux isn't installed, or the session can't be launched, claudespace
 fails immediately with a message naming the fix rather than hanging or
 silently falling back to iTerm2.
 
+#### Surviving a reboot
+
+The tmux backend also survives its **server** dying - not just the
+viewer window closing - via vendored, private copies of
+[tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) and
+[tmux-continuum](https://github.com/tmux-plugins/tmux-continuum). They run
+only on claudespace's own dedicated tmux socket, loaded from a generated
+config claudespace owns - your own `~/.tmux.conf` and everyday tmux usage
+are never touched. On by default:
+
+```toml
+[terminal.tmux]
+persist = true                    # default; set false to turn it off
+persist_interval_minutes = 15     # default autosave cadence
+```
+
+After a reboot (or `tmux kill-server`), the next `claudespace --tmux` run
+detects and waits briefly for the autorestore in flight, then attaches to
+the restored workspace instead of building a duplicate - panes, roles, and
+pipeline state (`run_doc`, `auto_handoff`, `lazy`, `template`) all come
+back. Each pane's `claude` process relaunches fresh (a new conversation,
+not the prior one resumed) via the same command line it was originally
+launched with.
+
+Known caveat: continuum's autosave only runs while a viewer is attached
+(it piggybacks on the terminal's own status-bar refresh, not an
+independent timer) - a workspace left with no viewer attached for a long
+stretch won't autosave during that stretch. And a pane saved in the brief
+window between typing its launch command and `claude` actually starting
+may come back as a plain shell rather than a relaunched `claude` - a
+`tmux-resurrect` timing quirk, not something claudespace can fully avoid.
+
 ### Bundled commands and prompts
 
 `install.sh` also registers six global slash-commands - `/researcher`,

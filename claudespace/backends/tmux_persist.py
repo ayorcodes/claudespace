@@ -1,0 +1,308 @@
+"""Session persistence for the tmux backend (Increment 2, AD8-AD12).
+
+Increment 1's tmux session survives its *viewer* closing (AD3, detached
+server). This module adds durability against the *server* dying - a
+reboot, `tmux kill-server`, a crash - via vendored `tmux-resurrect` +
+`tmux-continuum` (``claudespace/assets/tmux-plugins/``), loaded only on
+claudespace's own dedicated tmux socket via a generated, private config
+(AD8) - the user's own `~/.tmux.conf` and default tmux server are never
+touched.
+
+Two facts verified directly against the vendored plugin source before
+writing this module (design's own Open Questions/Verification items):
+
+- resurrect's saved pane format (``scripts/save.sh``'s ``pane_format``) does
+  **not** include pane-scoped ``@`` user options - only
+  session/window/pane-index/title/cwd/command. So claudespace's own
+  ``@cs_*`` tags (AD4's live state) are never captured by a resurrect save
+  and must be re-established separately on restore - this module's whole
+  job (AD10).
+- ``@resurrect-hook-post-restore-all`` exists in the vendored
+  ``scripts/restore.sh`` (``main()``) and fires *after*
+  ``restore_all_pane_processes`` - i.e. after every pane and its process
+  already exist - even though it isn't listed in the plugin's own
+  ``docs/hooks.md``. That's the hook ``rehydrate()`` is wired to.
+
+Positional matching, not ``#{pane_id}``: resurrect restores panes at
+``(session_name, window_index, pane_index)`` coordinates deterministically,
+but pane ids (``%N``) are **not** preserved across a server restart. The
+sidecar keys on the former, never the latter (AD10).
+
+``continuum``'s autosave is driven by a `status-right` format
+interpolation evaluated on the attached client's status-bar refresh - it
+does **not** run on any kind of independent timer/cron. This means autosave
+only actually fires while a viewer is attached; a workspace left with no
+viewer attached for a long stretch will not autosave during that stretch.
+This is a real, documented gap in what "on by default" delivers, inherent
+to how tmux-continuum itself works - not something this module works
+around.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+SOCKET_NAME = "claudespace"
+
+DATA_HOME = Path(
+    os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+) / "claudespace"
+PLUGINS_DIR = DATA_HOME / "tmux-plugins"
+TMUX_DATA_DIR = DATA_HOME / "tmux"
+CONF_PATH = TMUX_DATA_DIR / "claudespace.tmux.conf"
+TAGS_DIR = TMUX_DATA_DIR / "tags"
+LAST_TAGS_PATH = TAGS_DIR / "last.json"
+REHYDRATED_MARKER = TMUX_DATA_DIR / "rehydrated-at"
+
+# Every `@cs_*` key AD4 defines - kept as one list so the dump/rehydrate
+# round trip and TmuxBackend's own reads/writes can't silently drift apart.
+CS_KEYS: tuple[str, ...] = (
+    "@cs_workspace",
+    "@cs_instance",
+    "@cs_role",
+    "@cs_auto_handoff",
+    "@cs_lazy",
+    "@cs_template",
+    "@cs_run_doc",
+    "@cs_run_started",
+)
+
+
+def _persist_script_path() -> str:
+    """Absolute path to this console script's own executable.
+
+    Resurrect's hooks are ``eval``'d inside its own bash process, whose
+    ``PATH`` is inherited from whatever originally started the tmux
+    server - possibly hours or a reboot ago, and not guaranteed to include
+    pipx's bin dir. Resolving an absolute path at config-generation time
+    (colocated with the running interpreter, exactly where pipx puts
+    console scripts) avoids depending on that PATH at hook-eval time.
+    """
+    return str(Path(sys.executable).parent / "claudespace-tmux-persist")
+
+
+def _tmux(*args: str, timeout: float = 10.0) -> str:
+    """Bare synchronous ``tmux -L claudespace <args>`` - this module runs
+    as a standalone script invoked by resurrect's hooks (its own bash
+    process, not claudespace's asyncio loop), so it uses ``subprocess.run``
+    directly rather than ``backends/tmux_cli.py``'s async wrappers.
+    """
+    result = subprocess.run(
+        ["tmux", "-L", SOCKET_NAME, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or "").strip())
+    return result.stdout.strip()
+
+
+def render_conf(*, persist: bool, interval_minutes: int) -> str | None:
+    """The private tmux config's contents, or ``None`` if persistence is
+    disabled - the caller then removes any existing conf file entirely
+    (AD12's off-switch: "live behavior is unchanged" means the plugins
+    don't even load, not just that their hooks are no-ops).
+    """
+    if not persist:
+        return None
+    resurrect_entry = PLUGINS_DIR / "resurrect" / "resurrect.tmux"
+    continuum_entry = PLUGINS_DIR / "continuum" / "continuum.tmux"
+    persist_script = _persist_script_path()
+    return (
+        "# Generated by claudespace (backends/tmux_persist.py) - do not "
+        "edit by hand.\n"
+        "# Loaded only on claudespace's own dedicated tmux socket "
+        f"(-L {SOCKET_NAME}) - never touches ~/.tmux.conf or the default "
+        "tmux server (AD8).\n"
+        "\n"
+        "# Restore the pane's full command line for any process whose "
+        "command line contains \"claude\" (tilde form - tmux-resurrect's "
+        "restoring_programs.md) - a restored pane relaunches with its role "
+        "intact, since CLAUDESPACE_ROLE/ROOT/INSTANCE/... are baked into "
+        "that same command line at launch time (AD11).\n"
+        "set -g @resurrect-processes '\"~claude\"'\n"
+        "set -g @resurrect-capture-pane-contents off\n"
+        f"set -g @resurrect-hook-post-save-all '{persist_script} dump'\n"
+        f"set -g @resurrect-hook-post-restore-all '{persist_script} rehydrate'\n"
+        "\n"
+        "set -g @continuum-restore 'on'\n"
+        f"set -g @continuum-save-interval '{interval_minutes}'\n"
+        "\n"
+        f"run-shell '{resurrect_entry}'\n"
+        f"run-shell '{continuum_entry}'\n"
+    )
+
+
+def write_conf(*, persist: bool, interval_minutes: int) -> None:
+    """(Re)write or remove the private tmux config to match ``persist``.
+
+    Idempotent and cheap - safe to call on every ``TmuxBackend.run()``
+    (which does), not just at install/sync time, so behavior stays correct
+    even if the user changes ``persist``/``persist_interval_minutes``
+    without re-running ``claudespace-sync-assets``.
+    """
+    content = render_conf(persist=persist, interval_minutes=interval_minutes)
+    if content is None:
+        try:
+            CONF_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    TMUX_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if CONF_PATH.exists() and CONF_PATH.read_text() == content:
+        return
+    CONF_PATH.write_text(content)
+
+
+def marker_mtime() -> float | None:
+    """Last-modified time of ``REHYDRATED_MARKER``, or ``None`` if it has
+    never been touched. Used by ``TmuxBackend._await_autorestore_if_needed``
+    to detect "a rehydrate pass just completed" without caring whether it
+    did anything (a rehydrate with nothing to do still touches the marker
+    - see ``rehydrate()``'s docstring)."""
+    try:
+        return REHYDRATED_MARKER.stat().st_mtime
+    except FileNotFoundError:
+        return None
+
+
+def plugins_present() -> bool:
+    """Whether the vendored plugins are synced to their runtime location -
+    the ``doctor`` check (Implementation Order step 11)."""
+    return (
+        (PLUGINS_DIR / "resurrect" / "resurrect.tmux").is_file()
+        and (PLUGINS_DIR / "continuum" / "continuum.tmux").is_file()
+    )
+
+
+def dump() -> None:
+    """The save-hook entrypoint (``@resurrect-hook-post-save-all``): record
+    every claudespace pane's live ``@cs_*`` tags, keyed by the positional
+    coordinates resurrect itself restores panes at, so ``rehydrate()`` can
+    re-apply them after a restore (AD10).
+
+    Tolerant of a tmux invocation failing (e.g. the server has since gone
+    away) - a save hook failing must never take down whatever triggered it
+    (continuum's autosave, or a user's manual save).
+    """
+    try:
+        fields = ("session_name", "window_index", "pane_index", *CS_KEYS)
+        fmt = "\x1f".join(f"#{{{f}}}" for f in fields)
+        raw = _tmux("list-panes", "-a", "-F", fmt)
+    except Exception:
+        logger.warning("claudespace-tmux-persist dump: could not list panes", exc_info=True)
+        return
+
+    panes: list[dict[str, Any]] = []
+    for line in raw.split("\n"):
+        if not line:
+            continue
+        values = line.split("\x1f")
+        row = dict(zip(fields, values, strict=False))
+        if not row.get("@cs_workspace"):
+            continue  # not a claudespace pane - nothing to remember
+        panes.append(
+            {
+                "session_name": row["session_name"],
+                "window_index": row["window_index"],
+                "pane_index": row["pane_index"],
+                "tags": {k: row[k] for k in CS_KEYS if row.get(k)},
+            }
+        )
+
+    TAGS_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = LAST_TAGS_PATH.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps({"saved_at": time.time(), "panes": panes}, indent=2))
+    os.replace(tmp_path, LAST_TAGS_PATH)
+
+
+def rehydrate() -> None:
+    """The restore-hook entrypoint (``@resurrect-hook-post-restore-all``):
+    re-apply every pane's ``@cs_*`` tags from the sidecar, matched by
+    ``(session_name, window_index, pane_index)`` - resurrect's own
+    positional restore coordinates, since ``#{pane_id}`` does not survive
+    a server restart (AD10). Idempotent: safe to run against a
+    workspace that was never touched by a restore at all (writes nothing).
+
+    Tolerant of a missing/corrupt sidecar or a tmux failure - a workspace
+    whose tags can't be rehydrated is simply treated as untagged (Edge
+    Cases: attach-or-build then rebuilds), never a crash.
+    """
+    try:
+        saved = json.loads(LAST_TAGS_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        _touch_marker()
+        return
+
+    try:
+        fields = ("session_name", "window_index", "pane_index", "pane_id")
+        fmt = "\x1f".join(f"#{{{f}}}" for f in fields)
+        raw = _tmux("list-panes", "-a", "-F", fmt)
+    except Exception:
+        logger.warning("claudespace-tmux-persist rehydrate: could not list panes", exc_info=True)
+        _touch_marker()
+        return
+
+    live_by_position: dict[tuple[str, str, str], str] = {}
+    for line in raw.split("\n"):
+        if not line:
+            continue
+        session_name, window_index, pane_index, pane_id = line.split("\x1f")
+        live_by_position[(session_name, window_index, pane_index)] = pane_id
+
+    for entry in saved.get("panes", []):
+        key = (entry["session_name"], entry["window_index"], entry["pane_index"])
+        pane_id = live_by_position.get(key)
+        if pane_id is None:
+            continue  # that pane wasn't restored (or index layout shifted)
+        for tag_key, tag_value in entry.get("tags", {}).items():
+            try:
+                _tmux("set-option", "-p", "-t", pane_id, tag_key, tag_value)
+            except Exception:
+                logger.warning(
+                    "claudespace-tmux-persist rehydrate: failed to set %s on %s",
+                    tag_key,
+                    pane_id,
+                    exc_info=True,
+                )
+
+    _touch_marker()
+
+
+def _touch_marker() -> None:
+    """Signal "a rehydrate pass has completed" - ``TmuxBackend.run()``
+    polls for this after a fresh server start to close the race between
+    continuum's *backgrounded* autorestore and claudespace's own
+    attach-or-build decision (AD12's "autorestore races the viewer
+    launch" edge case). Written even when there was nothing to rehydrate,
+    so a workspace with no saved snapshot doesn't make callers wait out
+    the full poll budget for nothing.
+    """
+    TMUX_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    REHYDRATED_MARKER.write_text(str(time.time()))
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if len(sys.argv) != 2 or sys.argv[1] not in ("dump", "rehydrate"):
+        print("usage: claudespace-tmux-persist {dump|rehydrate}", file=sys.stderr)
+        sys.exit(2)
+    if sys.argv[1] == "dump":
+        dump()
+    else:
+        rehydrate()
+
+
+if __name__ == "__main__":
+    main()

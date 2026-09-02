@@ -9,7 +9,7 @@ directly.
 from __future__ import annotations
 
 from claudespace.backends.base import TerminalBackend
-from claudespace.config import load_terminal_backend, load_tmux_viewer
+from claudespace.config import load_terminal_backend, load_tmux_persistence, load_tmux_viewer
 
 __all__ = ["TerminalBackend", "get_backend"]
 
@@ -32,7 +32,12 @@ def get_backend(name: str | None = None) -> TerminalBackend:
     if resolved == "tmux":
         from claudespace.backends.tmux import TmuxBackend
 
-        return TmuxBackend(viewer=load_tmux_viewer())
+        persist, persist_interval_minutes = load_tmux_persistence()
+        return TmuxBackend(
+            viewer=load_tmux_viewer(),
+            persist=persist,
+            persist_interval_minutes=persist_interval_minutes,
+        )
     raise ValueError(
         f"Unknown terminal backend '{resolved}'. Known backends: iterm2, tmux"
     )

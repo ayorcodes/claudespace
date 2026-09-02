@@ -237,6 +237,31 @@ def _resolve_backend(*, force_tmux: bool = False) -> TerminalBackend:
         sys.exit(1)
 
 
+def _check_tmux_persistence() -> None:
+    """Informational-only doctor check for the tmux backend's vendored
+    resurrect/continuum plugins (Increment 2, Implementation Order step
+    11). Never affects doctor's overall exit code - tmux is an entirely
+    optional backend, unlike the iTerm2 checks above it.
+    """
+    from claudespace.backends import tmux_cli, tmux_persist
+
+    if not tmux_cli.is_tmux_available():
+        return
+    if tmux_persist.plugins_present():
+        logger.info(
+            "tmux backend: vendored resurrect/continuum plugins found at %s",
+            tmux_persist.PLUGINS_DIR,
+        )
+    else:
+        logger.warning(
+            "tmux backend: vendored resurrect/continuum plugins not found at "
+            "%s - run 'claudespace-sync-assets' to install them (session "
+            "persistence across a reboot won't work until then; the tmux "
+            "backend itself is otherwise unaffected).",
+            tmux_persist.PLUGINS_DIR,
+        )
+
+
 def _ensure_terminal_launched(backend: TerminalBackend) -> bool:
     """Cold-launch iTerm2 if it isn't already running, and run claudespace's
     own preflight checks against it (Python API enablement etc, see
@@ -282,6 +307,7 @@ def main() -> None:
             assume_yes=args.yes,
             launch=args.launch,
         )
+        _check_tmux_persistence()
         if ok:
             logger.info("claudespace is ready. Run 'claudespace' in any project folder.")
         sys.exit(0 if ok else 1)

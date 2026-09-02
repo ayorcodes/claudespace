@@ -22,7 +22,17 @@ import shutil
 from claudespace.backends.base import BackendUnavailableError
 
 TMUX_TIMEOUT_SECONDS = 5.0
+NEW_SESSION_TIMEOUT_SECONDS = 15.0
 MIN_TMUX_VERSION = (3, 0)
+
+# AD8: every claudespace tmux command runs on this dedicated named socket,
+# never the user's default one - the linchpin that lets Increment 2 load
+# tmux-resurrect/tmux-continuum without ever touching the user's own
+# ~/.tmux.conf or interfering with their everyday tmux usage, and
+# retroactively closes Increment 1's "user's tmux config/plugins
+# interfering" edge case (there is nothing of the user's to interfere,
+# since this server never loads it).
+SOCKET_NAME = "claudespace"
 
 
 class TmuxCommandError(RuntimeError):
@@ -39,8 +49,27 @@ def is_tmux_available() -> bool:
     return shutil.which("tmux") is not None
 
 
+def _socket_args() -> list[str]:
+    """``-L claudespace``, plus ``-f <private conf>`` iff persistence wrote
+    one (AD8/AD12) - omitted, not just empty, when persistence is off, so
+    an unadorned dedicated-socket server with zero plugins is what a
+    ``persist=false`` user actually gets.
+
+    Importing ``tmux_persist`` here (not at module scope) avoids a circular
+    import - it imports nothing from this module, but keeping the
+    dependency direction one-way (``tmux_persist`` is config/pure-Python,
+    this module is the subprocess boundary) is deliberate.
+    """
+    from claudespace.backends import tmux_persist
+
+    args = ["-L", SOCKET_NAME]
+    if tmux_persist.CONF_PATH.is_file():
+        args += ["-f", str(tmux_persist.CONF_PATH)]
+    return args
+
+
 async def run(*args: str, timeout: float = TMUX_TIMEOUT_SECONDS) -> str:
-    """Run ``tmux <args>``, returning stripped stdout.
+    """Run ``tmux <socket args> <args>``, returning stripped stdout.
 
     Raises ``TmuxCommandError`` on a non-zero exit (with stderr as the
     message) and ``BackendUnavailableError`` on a timeout - the latter
@@ -51,6 +80,7 @@ async def run(*args: str, timeout: float = TMUX_TIMEOUT_SECONDS) -> str:
     try:
         proc = await asyncio.create_subprocess_exec(
             "tmux",
+            *_socket_args(),
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -93,8 +123,36 @@ async def has_session(session: str) -> bool:
         return False
 
 
+async def server_running() -> bool:
+    """Whether claudespace's dedicated-socket server is already up.
+
+    tmux's default ``exit-empty`` behavior means a server with zero
+    sessions has already shut itself down - so "the server is running" and
+    "at least one session exists" are the same fact for claudespace's usage
+    pattern, and any failure from ``list-sessions`` (including "no server
+    running") means "not running." Used to detect whether the *next*
+    command is the one that would start a fresh server (and therefore
+    trigger continuum's autorestore-on-start check) - see
+    ``TmuxBackend._await_autorestore_if_needed``.
+    """
+    try:
+        await run("list-sessions")
+        return True
+    except TmuxCommandError:
+        return False
+
+
 async def new_session(session: str, *, cwd: str | None = None) -> str:
-    """Create a detached session, returning its starting pane's ``#{pane_id}``."""
+    """Create a detached session, returning its starting pane's ``#{pane_id}``.
+
+    Gets a longer timeout than other commands: this is the one most likely
+    to be the client that starts a fresh server from scratch, which (with
+    the private config, Increment 2) also means sourcing resurrect and
+    continuum - verified in practice to occasionally take noticeably
+    longer than the general ``TMUX_TIMEOUT_SECONDS`` bound on a cold
+    start. A later command against the same (by-then-already-running)
+    server doesn't pay this cost.
+    """
     args = [
         "new-session",
         "-d",
@@ -110,7 +168,7 @@ async def new_session(session: str, *, cwd: str | None = None) -> str:
     ]
     if cwd:
         args += ["-c", cwd]
-    return await run(*args)
+    return await run(*args, timeout=NEW_SESSION_TIMEOUT_SECONDS)
 
 
 async def kill_session(session: str) -> None:

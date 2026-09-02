@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from claudespace import utils
-from claudespace.backends import tmux_cli
+from claudespace.backends import tmux_cli, tmux_persist
 from claudespace.backends.base import BackendUnavailableError, TerminalBackend
 from claudespace.backends.common import (
     CLAUDE_READY_POLL_INTERVAL_SECONDS,
@@ -64,6 +64,19 @@ TMUX_NOT_FOUND_HELP = (
     "Install it (brew install tmux) or set terminal.backend = \"iterm2\" in "
     "~/.config/claudespace/config.toml."
 )
+
+
+# Bounded window to wait for continuum's *backgrounded* autorestore to
+# finish (AD12's "autorestore races the viewer launch" edge case) before
+# trusting a "no matching pane" result as "nothing to attach to, build
+# fresh." Continuum's own restore script sleeps 1s then runs resurrect's
+# restore - a handful of panes typically finishes well under this. Bounded,
+# not indefinite: a workspace with no saved snapshot returns almost
+# immediately (rehydrate() still touches the marker even with nothing to
+# do - see its docstring), and a genuinely stuck restore just means this
+# attaches/builds after the full wait rather than hanging forever.
+AUTORESTORE_WAIT_SECONDS = 8.0
+AUTORESTORE_POLL_INTERVAL_SECONDS = 0.25
 
 
 def _version_too_old_help(found: str) -> str:
@@ -123,8 +136,16 @@ class TmuxBackend(TerminalBackend):
     # backend) resolves the same one.
     BACKEND_NAME = "tmux"
 
-    def __init__(self, *, viewer: str = "ghostty") -> None:
+    def __init__(
+        self,
+        *,
+        viewer: str = "ghostty",
+        persist: bool = True,
+        persist_interval_minutes: int = 15,
+    ) -> None:
         self._viewer = viewer
+        self._persist = persist
+        self._persist_interval_minutes = persist_interval_minutes
 
     # -- preflight / run ----------------------------------------------------
 
@@ -135,6 +156,17 @@ class TmuxBackend(TerminalBackend):
         if not tmux_cli.is_tmux_available():
             logger.error("%s", TMUX_NOT_FOUND_HELP)
             sys.exit(1)
+
+        # Cheap and idempotent (Increment 2, AD12) - keeps the private
+        # config in sync with current persist/interval settings even if
+        # the user never re-ran claudespace-sync-assets. Must happen before
+        # `entrypoint` runs: its first real tmux command is what may start
+        # a fresh server and load this file (-V below never touches a
+        # server, so it doesn't need this first, but there's no reason to
+        # delay it either).
+        tmux_persist.write_conf(
+            persist=self._persist, interval_minutes=self._persist_interval_minutes
+        )
 
         try:
             raw_version = asyncio.run(tmux_cli.version())
@@ -334,7 +366,49 @@ class TmuxBackend(TerminalBackend):
 
     # -- lookups ---------------------------------------------------------------
 
+    async def _await_autorestore_if_needed(self) -> None:
+        """Give continuum's backgrounded autorestore a bounded chance to
+        finish before any lookup trusts an empty result (AD12).
+
+        Only relevant when the server *doesn't already exist* - an
+        already-running server has already gone through continuum's
+        startup check (or persistence is off and never will), so there is
+        nothing in flight to wait for. tmux's default ``exit-empty``
+        means "no server" and "not yet autorestored" are indistinguishable
+        from here, which is exactly the case this needs to cover.
+
+        A read-only lookup (``list-panes``/``has-session``) does **not**
+        itself start a tmux server if none exists - only a command like
+        ``new-session`` does, and the private config (with continuum's
+        autorestore check) only loads at that moment. So this boots the
+        server itself, via a disposable probe session, purely to make that
+        loading happen deterministically *before* any real lookup runs -
+        otherwise `find_workspace` finding nothing would be genuinely
+        ambiguous between "no server" and "server just started, restore
+        still in flight."
+        """
+        if not self._persist:
+            return
+        if await tmux_cli.server_running():
+            return
+        baseline = tmux_persist.marker_mtime()
+        probe = f"cs-probe-{uuid.uuid4().hex[:8]}"
+        try:
+            await tmux_cli.new_session(probe)
+        except Exception:
+            logger.warning("Could not boot the tmux server to check for an autorestore", exc_info=True)
+            return
+        try:
+            deadline = time.monotonic() + AUTORESTORE_WAIT_SECONDS
+            while time.monotonic() < deadline:
+                if tmux_persist.marker_mtime() != baseline:
+                    return
+                await asyncio.sleep(AUTORESTORE_POLL_INTERVAL_SECONDS)
+        finally:
+            await tmux_cli.kill_session(probe)
+
     async def find_workspace(self, marker: str) -> TmuxWindow | None:
+        await self._await_autorestore_if_needed()
         rows = await self._matching_rows(marker, None)
         if not rows:
             return None

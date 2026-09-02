@@ -1,6 +1,6 @@
 # Ghostty Terminal Support (via a tmux backend) — Implementation Design
 
-Status: implemented
+Status: Increment 1 (tmux backend) implemented. Increment 2 (session persistence) designed, pending implementation.
 
 ## References
 
@@ -222,3 +222,80 @@ Steps 1–5 land the abstraction with the iTerm2 path provably unchanged (the ha
 
 - **Viewer launch mechanism per terminal.** The one remaining terminal-specific detail is *how* to spawn the viewer attaching to the detached session — `ghostty -e tmux attach -t <name>` vs. `open -na Ghostty --args …` vs. a terminal-specific incantation. Low risk (it's a process spawn, and failure leaves the session reachable via manual `tmux attach` — Error Handling covers it), but confirm the exact Ghostty invocation in step 7; keep `launch_viewer` a small per-viewer lookup so other viewers are a one-line addition.
 - No open *product* questions — the Planning Brief's decisions (tmux-everywhere, opt-in/experimental, full parity, iTerm2 default, macOS-only, Ghostty-as-goal-not-restriction) are taken as given.
+
+---
+
+# Increment 2 — Session persistence across tmux-server death (tmux-resurrect / tmux-continuum)
+
+*Appended after Increment 1 shipped, per a user request routed via implementer (`.claudespace/reports/2026-09-02-tmux-session-persistence-implementer-question-note.md`). Increment 1 gives durability against the **viewer** closing (detached server, AD3, verified live). This increment adds durability against the **tmux server** dying — reboot, `tmux kill-server`, crash — so a workspace and its running `claude` panes come back automatically.*
+
+## AD8 — Run claudespace's tmux server on a dedicated socket with a private config (also retro-hardens Increment 1)
+
+All claudespace tmux commands run against a dedicated server: `tmux -L claudespace -f <bundled claudespace.tmux.conf> …`. `tmux_cli` gains the constant `-L claudespace`; viewer attach becomes `… tmux -L claudespace attach -t <session>`.
+
+**Reasoning.** This is the linchpin that makes persistence safe and answers every scope question implementer raised:
+
+- **No edits to the user's `~/.tmux.conf`.** resurrect + continuum load only from claudespace's private config, on claudespace's own server. The user's tmux setup is never touched — which also *retroactively resolves* Increment 1's "User's tmux config/plugins interfering" Edge Case: claudespace's server doesn't load the user's config at all, so there is nothing to interfere.
+- **continuum autosave/autorestore is scoped to claudespace's sessions only.** continuum's autorestore-on-server-start is normally global; on a dedicated socket it only ever sees claudespace's own server, so enabling it cannot disturb the user's everyday tmux. This directly settles implementer's "does continuum affect the user's entire tmux usage" question — no.
+- Isolation of failure surface: a broken user plugin/config can't wedge claudespace's automation, and vice-versa.
+
+The bundled config is minimal: load the two vendored plugins (below), set the persistence options, nothing cosmetic (the user's prefix/status bar are irrelevant to a claudespace server they attach to only as a viewport).
+
+## AD9 — Vendor resurrect + continuum; do not require TPM or a network fetch
+
+resurrect and continuum are pure shell/tmux scripts. Vendor both under claudespace's assets (e.g. `assets/tmux-plugins/{resurrect,continuum}/`), synced by the existing `assets_sync` path, and `run-shell` them by absolute path from the private config. No TPM, no `git clone`, no network at install time. `claudespace doctor` gains a check that the vendored plugin entrypoints exist and that `tmux -L claudespace` can load them.
+
+**Reasoning.** Auto-editing the user's tmux.conf was rejected (AD8); requiring the user to hand-install TPM + plugins would make persistence a manual setup chore and a support burden. Vendoring keeps it a property claudespace fully owns and can version alongside its own code. Pin the vendored versions; upgrades are a deliberate asset bump.
+
+## AD10 — Live state stays `@cs_*`; durability is a snapshot+rehydrate layer, not a second live store
+
+Increment 1's AD4 (`@cs_*` pane user options as the authoritative live state) is **unchanged**. resurrect does **not** persist pane-scoped user options — it captures pane layout, cwd, title, and the running command line, not `set -p @…` values (implementer's central concern; assumed true, an explicit verification item below). So `@cs_*` must be re-established on restore by claudespace itself:
+
+- **At save time** — hooked off resurrect's save (a `@resurrect-hook-post-save-all` script, and thus every continuum autosave) — a claudespace script dumps, for every claudespace pane, `(session_name, window_index, pane_index) → { @cs_* map }` (plus, for phase 2, the pane's Claude Code session id) to a sidecar JSON next to resurrect's own save dir: `${XDG_DATA_HOME:-~/.local/share}/claudespace/tmux/tags/last.json` (timestamped + `last` symlink, mirroring resurrect).
+- **At restore time** — hooked off resurrect's latest-firing restore hook (see verification item on exact name) — a claudespace `tmux-rehydrate` script reads `last.json` and re-applies `set-option -p @cs_*` to each restored pane, matched by `(session_name, window_index, pane_index)`. resurrect restores those positional coordinates deterministically, so the match is stable even though `#{pane_id}` (`%N`) is *not* preserved across a server restart.
+
+**Reasoning.** Keeping the live model untouched means every backend lookup built in Increment 1 (`find_role_pane`, `each_pane`, handoff, `claudespace-msg`, watchdog) works verbatim on a restored workspace once rehydration has run — no code path learns about resurrect. The sidecar is a crash-recovery snapshot written only at save time, not a competing source of truth, so AD4's clean semantics and no-lock property hold. Matching by positional coordinates (not `pane_id`) is the one subtlety and is what makes re-tagging survive the id reset.
+
+## AD11 — Restore the panes' processes via `@resurrect-processes`; conversation *resume* is a gated phase 2
+
+- **Process restore (v1).** Configure resurrect to restore the pane's full `claude` command line: `@resurrect-processes` with the tilde/"full command line" form for `claude` (exact quoting is a verification item). Because Increment 1's `_launch_pane` already bakes identity into that command line as env exports (`CLAUDESPACE_ROLE`/`ROOT`/`INSTANCE`/`MAX_ITEMS`/`THINK`) plus `--append-system-prompt-file`/`--name`, a restored pane re-launches as the correct role, in the correct root, with its persona baked — the normal cold-start state. Combined with AD10 rehydrating the workspace-level `@cs_*` (`run_doc`, `auto_handoff`, `lazy`, `template`) that aren't in the per-pane command, the restored workspace is fully functional: the pipeline continues via its markers/handoff exactly as after any fresh build.
+- **Conversation resume (phase 2, opt-in, gated).** Re-running the command line starts a *new* `claude` conversation, not the pane's prior one. Truly resuming the prior conversation means rewriting the restored command to `claude --resume <session-id> …`, which requires (a) capturing each pane's Claude Code session id at save time into the sidecar, and (b) confirming non-interactive `claude --resume <id>` is supported and locating where Claude Code records that id. Both are unverified and reach into Claude Code internals, so this is **descoped from v1** and tracked as a follow-up. v1 restores workspace *shape + state + role*, which is the durability the request is really about; conversation-exact resume is an enhancement, not a blocker.
+
+**Reasoning (staff-engineer call, autonomous mode).** The high-value, low-fragility 80% — a reboot leaves you a working claudespace workspace that reattaches and keeps going — is deliverable now with mechanisms claudespace fully controls. Conversation-exact resurrection couples us to Claude-internal behavior that could change under us; gating it keeps v1 robust and shippable while leaving the door open. A human can audit/redirect this via this note.
+
+## AD12 — Enablement: on by default, scoped, disable-able; coexist with attach-or-build
+
+- `[terminal.tmux] persist = true` (default on — negligible risk on the private socket, and it is exactly what was asked for) with `persist_interval_minutes = 15` (continuum autosave cadence). Documented off-switch: `persist = false` disables continuum autosave and the save/restore hooks; live behavior is unchanged.
+- **Coexistence with build/attach.** On `claudespace --tmux`, if continuum has already autorestored the session (server came up and restored before the user ran claudespace), `find_workspace`/`has-session` finds it and the existing attach-or-build path attaches rather than rebuilding. Guard the build path so an autorestored-but-not-yet-rehydrated session is rehydrated (idempotent re-apply) before use, and never double-built.
+
+## Edge Cases (Increment 2)
+
+- **`@cs_*` lost on restore** → the AD10 rehydrate hook re-applies them; if the sidecar is missing/corrupt, the restored panes are visibly present but untagged — treat as "no claudespace workspace found" (attach-or-build rebuilds), never a crash. Rehydrate is idempotent.
+- **`pane_id` reset across restart** → never used as the durable key; matching is positional `(session, window_index, pane_index)` (AD10).
+- **Partial/failed restore** (a pane's process not in the restore whitelist) → the pane still restores as a shell in the right cwd with its tags; the role can be re-launched. No corrupt state.
+- **Autorestore races the viewer launch** → building/attaching waits on `has-session` for claudespace's socket; rehydrate runs before any backend lookup.
+- **Two workspaces (instances) restored together** → distinct session names carry distinct `(session,…)` keys, so tags rehydrate to the right panes; `@cs_instance` disambiguation from Increment 1 is preserved.
+- **User never enabled persistence (`persist=false`)** → behaves exactly as Increment 1 (viewer-durable only); no hooks, no sidecar.
+
+## Tests Required (Increment 2)
+
+- Unit: sidecar dump/rehydrate round-trip against a synthetic resurrect save (given a `(session,window,pane)→@cs_*` map, `set -p` calls are reconstructed correctly); missing/corrupt sidecar ⇒ treated as untagged, no crash; `persist=false` emits no hooks.
+- Integration (headless, dedicated socket): build a workspace on `tmux -L claudespace-test`, trigger a resurrect **save**, `kill-server`, start a fresh server, run resurrect **restore** + the rehydrate hook, then assert `find_role_pane`/`each_pane`/`get_run_doc` all resolve — i.e. every Increment-1 lookup works on the restored, rehydrated workspace. This is the acceptance test for the whole increment and needs no display.
+- `doctor`: vendored-plugin-presence check passes/fails as expected.
+- Manual macOS E2E: real reboot (or `tmux kill-server`) with `persist=true`, confirm the Ghostty-hosted workspace autorestores with panes, roles, tags, and a running (fresh) `claude` per role, and the pipeline can continue.
+
+## Implementation Order (Increment 2 — after Increment 1 steps 1–9)
+
+10. **Dedicated socket + private config** (AD8): thread `-L claudespace -f <conf>` through `tmux_cli` and viewer launch; ship a minimal `claudespace.tmux.conf`. Re-run Increment 1's tmux tests on the dedicated socket (no behavior change expected).
+11. **Vendor plugins** (AD9): add resurrect + continuum under assets + `assets_sync`; `run-shell` them from the private config; `doctor` check.
+12. **Sidecar save hook** (AD10): `@resurrect-hook-post-save-all` → dump `(session,window,pane)→@cs_*` to `tags/last.json`.
+13. **Rehydrate restore hook** (AD10): `tmux-rehydrate` script wired to resurrect's latest restore hook; re-apply `@cs_*`; idempotent; coexist with attach-or-build (AD12).
+14. **Process restore + enablement** (AD11 v1, AD12): `@resurrect-processes` for `claude`; `persist`/`persist_interval_minutes` config; continuum autosave on.
+15. **Tests** (Increment 2) then the reboot E2E.
+16. *(Phase 2, separate/opt-in — not v1):* capture Claude session id at save; rewrite restored command to `claude --resume <id>`; gated on the verification items below.
+
+## Open Questions / Verification items (Increment 2)
+
+- **Exact resurrect option/hook strings.** Confirm against the *vendored* resurrect version: (a) that pane-scoped `@` user options are indeed **not** saved (AD10's premise); (b) the precise `@resurrect-processes` quoting to restore `claude` with its full command line (tilde form); (c) the latest-firing restore hook to attach rehydrate to (the confirmed hook set is `post-save-layout`, `post-save-all`, `pre-restore-all`, `pre-restore-pane-processes` — if none fires *after* panes/processes exist, fall back to invoking `claudespace tmux-rehydrate` from the restored entry pane's own command line, or a one-shot poller). Design commits to the *approach*; these strings are implementation-verified, not assumed.
+- **Positional-key stability.** Verify resurrect restores `(session_name, window_index, pane_index)` deterministically for claudespace's layouts (expected yes); if window/pane indices can renumber, fall back to matching on the restored pane's saved title (`claude --name <role>`).
+- **Phase 2 gating (conversation resume):** is `claude --resume <id>` supported non-interactively, and where does Claude Code persist the per-session id? Answers decide whether/how AD11 phase 2 proceeds. Not a v1 blocker.

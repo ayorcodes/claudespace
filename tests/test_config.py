@@ -15,6 +15,7 @@ from claudespace.config import (
     ensure_agentic_template_seeded,
     ensure_native_template_seeded,
     load_terminal_backend,
+    load_tmux_persistence,
     load_tmux_viewer,
     load_user_templates,
     migrate_role_commands,
@@ -174,3 +175,22 @@ class TestLoadTmuxViewer:
     def test_missing_tmux_table_defaults_to_ghostty(self, toml_path):
         toml_path.write_text('[terminal]\nbackend = "tmux"\n')
         assert load_tmux_viewer(toml_path) == "ghostty"
+
+
+class TestLoadTmuxPersistence:
+    def test_defaults_to_on_every_15_minutes(self, tmp_path):
+        assert load_tmux_persistence(tmp_path / "nope.toml") == (True, 15)
+
+    def test_reads_configured_values(self, toml_path):
+        toml_path.write_text(
+            '[terminal.tmux]\npersist = false\npersist_interval_minutes = 30\n'
+        )
+        assert load_tmux_persistence(toml_path) == (False, 30)
+
+    def test_persist_true_explicit(self, toml_path):
+        toml_path.write_text('[terminal.tmux]\npersist = true\n')
+        assert load_tmux_persistence(toml_path) == (True, 15)
+
+    def test_missing_tmux_table_defaults(self, toml_path):
+        toml_path.write_text('[terminal]\nbackend = "tmux"\n')
+        assert load_tmux_persistence(toml_path) == (True, 15)
