@@ -70,6 +70,12 @@ HANDOFF_STATE_SUFFIX = ".handed-off"
 # nagged on every subsequent Stop.
 NAG_STATE_SUFFIX = ".nagged"
 
+# Marks that a fresh .done/.blocked has already fired its terminal-state
+# notification (D6/FR6), mtime-compared to the marker exactly like
+# HANDOFF_STATE_SUFFIX, so a retriggered Stop on the same marker doesn't
+# re-notify.
+NOTIFIED_STATE_SUFFIX = ".notified"
+
 
 def _read_fresh_marker(path: str) -> str | None:
     """Return the marker's content (the artifact path it names) if it
@@ -113,6 +119,44 @@ def _marker_present_and_handed(path: str) -> bool:
     return os.path.isfile(state_path) and os.path.getmtime(path) <= os.path.getmtime(
         state_path
     )
+
+
+def _already_notified(marker_path: str) -> bool:
+    notified_path = marker_path + NOTIFIED_STATE_SUFFIX
+    return os.path.isfile(notified_path) and os.path.getmtime(
+        marker_path
+    ) <= os.path.getmtime(notified_path)
+
+
+def _mark_notified(marker_path: str) -> None:
+    open(marker_path + NOTIFIED_STATE_SUFFIX, "w").close()
+
+
+async def _notify_terminal_state(
+    backend: TerminalBackend,
+    *,
+    root: str,
+    instance: str,
+    role: str,
+    marker_path: str,
+    kind: str,
+) -> None:
+    """FR6/AC5: fire once, the moment a fresh ``.done``/``.blocked`` marker
+    is observed - deduped by ``.notified`` (mtime-compared to the marker,
+    same idiom as ``.handed-off``), so a retriggered Stop on the same marker
+    doesn't re-notify. Fires unconditionally on a fresh marker, even when
+    the handoff itself can't find a destination pane (Edge Cases: "no
+    destination pane" still lets the user learn the role finished).
+    """
+    if _already_notified(marker_path):
+        return
+    await backend.notify(
+        title=f"claudespace: {role} {kind}",
+        message=f"'{role}' {kind} in workspace {root}.",
+        marker=root,
+        instance=instance,
+    )
+    _mark_notified(marker_path)
 
 
 def _already_nagged(done_path: str) -> bool:
@@ -454,6 +498,10 @@ async def _send_handoff(
     new_topic_warning = None
 
     if raw_blocked_content:
+        await _notify_terminal_state(
+            backend, root=root, instance=instance, role=role,
+            marker_path=blocked_path, kind="blocked",
+        )
         destination_role, blocked_artifact = parse_blocked_marker(
             raw_blocked_content, stage=stage
         )
@@ -476,6 +524,10 @@ async def _send_handoff(
             f"{blocked_artifact} "
         )
     elif raw_done_content:
+        await _notify_terminal_state(
+            backend, root=root, instance=instance, role=role,
+            marker_path=done_path, kind="done",
+        )
         destination_role, done_artifact = parse_done_marker(
             raw_done_content, stage=stage
         )
@@ -582,8 +634,11 @@ async def _send_handoff(
 async def _maybe_nag_missing_marker(
     backend: TerminalBackend, *, root: str, instance: str, role: str
 ) -> bool:
-    """If auto-handoff is on and ``role`` has a forward stage but left no
-    fresh marker at all, print a Stop-blocking nag once and return ``True``.
+    """If ``role`` has a forward stage but left no fresh marker at all, fire
+    an attention notification once (D6/FR8, independent of auto-handoff) and,
+    if auto-handoff is also on, print a Stop-blocking nag - returning
+    ``True`` only for the latter (the caller cares whether the Stop was
+    blocked, not whether a notification fired).
 
     A marker that's merely stale-but-already-handed-off (see
     ``_marker_present_and_handed``) is not "missing" and never nags - it is
@@ -642,16 +697,35 @@ async def _maybe_nag_missing_marker(
         # (see _marker_present_and_handed).
         return False
 
-    if _already_nagged(done_path):
+    already_nagged = _already_nagged(done_path)
+    if already_nagged:
         _, run_started = await backend.get_run_doc(marker=root, instance=instance)
         if run_started is None or os.path.getmtime(done_path + NAG_STATE_SUFFIX) >= run_started:
             return False
         _clear_nag(done_path)
+        already_nagged = False
+
+    # FR8/AC7: the attention notification fires for any role with a forward
+    # stage that stops with no fresh marker at all, independent of the
+    # auto-handoff toggle - a supervised (non--think) run where a role stops
+    # to ask the user still notifies, even in prefill-only mode (D6). It
+    # shares the .nagged streak sentinel with the reminder block below for
+    # dedup, but is not gated on auto-handoff the way the reminder
+    # injection is - so the sentinel gets written here regardless, and the
+    # auto-handoff check below only decides whether the reminder itself
+    # (which blocks the Stop and re-prompts this same pane) also fires.
+    if not already_nagged:
+        _mark_nagged(done_path)
+        await backend.notify(
+            title=f"claudespace: {role} needs attention",
+            message=f"'{role}' pane in {root} stopped with no completion marker.",
+            marker=root,
+            instance=instance,
+        )
 
     if not await backend.get_auto_handoff(marker=root, instance=instance):
         return False
 
-    _mark_nagged(done_path)
     _print_nag_block(role, done_path)
     return True
 

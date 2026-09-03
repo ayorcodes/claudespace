@@ -106,6 +106,35 @@ class TestArgvShapes:
             "--lines", "20",
         )
 
+    def test_rename_workspace_guards_a_leading_dash_with_double_dash(self, recorder):
+        asyncio.run(
+            cmux_cli.rename_workspace(workspace_ref="workspace:1", title="-not-a-flag")
+        )
+        assert recorder[0] == (
+            "cmux", "rename-workspace", "--workspace", "workspace:1", "--", "-not-a-flag",
+        )
+
+    def test_notify_builds_expected_argv(self, recorder):
+        asyncio.run(
+            cmux_cli.notify(title="claudespace: implementer done", body="see docs/x.md")
+        )
+        assert recorder[0] == (
+            "cmux", "notify", "--title", "claudespace: implementer done",
+            "--body", "see docs/x.md",
+        )
+
+    def test_notify_targets_a_workspace_when_given(self, recorder):
+        asyncio.run(
+            cmux_cli.notify(title="t", body="b", workspace_ref="workspace:6")
+        )
+        assert recorder[0] == (
+            "cmux", "notify", "--title", "t", "--body", "b", "--workspace", "workspace:6",
+        )
+
+    def test_notify_omits_body_flag_when_empty(self, recorder):
+        asyncio.run(cmux_cli.notify(title="t", body=""))
+        assert recorder[0] == ("cmux", "notify", "--title", "t")
+
     def test_workspace_close_is_the_canonical_verb(self, recorder):
         asyncio.run(cmux_cli.workspace_close("workspace:6"))
         assert recorder[0] == ("cmux", "workspace", "close", "workspace:6")
@@ -215,6 +244,20 @@ class TestErrorClassification:
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         asyncio.run(cmux_cli.workspace_close("workspace:1"))
+
+    def test_rename_workspace_is_best_effort_and_never_raises(self, monkeypatch):
+        async def _fake_exec(*args, **kwargs):
+            return FakeProcess(b"", b"boom", 1)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        asyncio.run(cmux_cli.rename_workspace(workspace_ref="workspace:1", title="x"))
+
+    def test_notify_is_best_effort_and_never_raises(self, monkeypatch):
+        async def _fake_exec(*args, **kwargs):
+            return FakeProcess(b"", b"boom", 1)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        asyncio.run(cmux_cli.notify(title="t", body="b"))
 
 
 @pytest.mark.skipif(not cmux_cli.is_cmux_available(), reason="cmux not installed")

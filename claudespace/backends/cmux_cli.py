@@ -217,6 +217,39 @@ async def focus_pane(*, workspace_ref: str, pane_ref: str) -> None:
         pass
 
 
+async def rename_workspace(*, workspace_ref: str, title: str) -> None:
+    """Set ``workspace_ref``'s sidebar label (D4) - unlike ``rename_tab``,
+    this cmux object is never parsed back for identity, so it's free to
+    carry the display-only slug alone (no role suffix).
+
+    Best-effort: a rename failing is cosmetic, mirroring ``rename_tab``.
+    """
+    try:
+        await run("rename-workspace", "--workspace", workspace_ref, "--", title)
+    except CmuxCommandError:
+        pass
+
+
+async def notify(*, title: str, body: str, workspace_ref: str | None = None) -> None:
+    """Fire a cmux-native notification (D5), optionally targeted at
+    ``workspace_ref`` so it's queryable/persisted against that session
+    rather than the caller's own (arbitrary, possibly headless) workspace.
+
+    Best-effort: a delivery failure is cosmetic, never worth failing the
+    Stop hook or watchdog loop over - mirrors every other best-effort
+    wrapper in this module.
+    """
+    args = ["notify", "--title", title]
+    if body:
+        args += ["--body", body]
+    if workspace_ref is not None:
+        args += ["--workspace", workspace_ref]
+    try:
+        await run(*args)
+    except CmuxCommandError:
+        pass
+
+
 async def workspace_select(workspace_ref: str) -> None:
     """Best-effort: bring ``workspace_ref`` to the front - the cmux
     equivalent of iTerm2's ``Window.async_activate``. Never fatal (Edge

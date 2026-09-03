@@ -8,29 +8,36 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 from claudespace import pipeline
 from claudespace.handoff import (
     HANDOFF_STATE_SUFFIX,
     NAG_STATE_SUFFIX,
+    NOTIFIED_STATE_SUFFIX,
     _handle_new_topic,
     _maybe_nag_missing_marker,
+    _notify_terminal_state,
 )
 
 
 class _FakeBackend:
     """Duck-typed stand-in for ``TerminalBackend``: ``_maybe_nag_missing_marker``
-    only ever calls ``get_run_doc`` and ``get_auto_handoff`` on it."""
+    only ever calls ``get_run_doc``, ``get_auto_handoff`` and ``notify`` on it."""
 
     def __init__(self, *, run_started: float | None, auto_handoff: bool = True):
         self._run_started = run_started
         self._auto_handoff = auto_handoff
+        self.notifications: list[tuple[str, str]] = []
 
     async def get_run_doc(self, *, marker, instance=None):
         return None, self._run_started
 
     async def get_auto_handoff(self, *, marker, instance=None):
         return self._auto_handoff
+
+    async def notify(self, *, title, message, marker=None, instance=None):
+        self.notifications.append((title, message))
 
 
 def _prep(tmp_path, role="implementer", instance="i1"):
@@ -74,6 +81,7 @@ def test_nagged_older_than_run_started_is_cleared_and_renagged(tmp_path):
     # stale one from the earlier item.
     assert os.path.isfile(nag_path)
     assert os.path.getmtime(nag_path) >= 100.0
+    assert len(backend.notifications) == 1
 
 
 def test_run_started_none_treats_existing_nagged_as_valid(tmp_path):
@@ -98,6 +106,28 @@ def test_no_existing_nagged_still_nags_without_checking_run_doc(tmp_path):
 
     assert fired is True
     assert os.path.isfile(done_path + NAG_STATE_SUFFIX)
+    assert len(backend.notifications) == 1
+
+
+def test_attention_notify_fires_once_per_streak_independent_of_auto_handoff(tmp_path):
+    # FR8/AC7: the notification fires even when auto-handoff is off (a
+    # supervised run), unlike the Stop-blocking reminder it's decoupled from.
+    root, done_path = _prep(tmp_path)
+    backend = _FakeBackend(run_started=100.0, auto_handoff=False)
+
+    fired = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+    assert fired is False  # no Stop-blocking reminder without auto-handoff
+    assert os.path.isfile(done_path + NAG_STATE_SUFFIX)  # but still deduped
+    assert len(backend.notifications) == 1
+
+    # A second Stop with the same missing-marker streak does not re-notify.
+    fired_again = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+    assert fired_again is False
+    assert len(backend.notifications) == 1
 
 
 def _write_stale_and_handed(path: str, *, marker_mtime: float, sentinel_mtime: float) -> None:
@@ -166,6 +196,7 @@ def test_genuinely_missing_marker_still_nags(tmp_path):
 
     assert fired is True
     assert os.path.isfile(done_path + NAG_STATE_SUFFIX)
+    assert len(backend.notifications) == 1
 
 
 def test_nags_without_crashing_when_the_scoped_session_dir_does_not_exist_yet(tmp_path):
@@ -248,3 +279,60 @@ def test_same_doc_never_warns_in_the_first_place(tmp_path):
         ) is None
 
     asyncio.run(_run())
+
+
+def test_notify_terminal_state_fires_once_and_marks_notified(tmp_path):
+    # FR6/AC5: a fresh .done fires backend.notify once, and marks the
+    # .notified sentinel so a retriggered Stop on the same marker doesn't.
+    root, done_path = _prep(tmp_path)
+    with open(done_path, "w") as f:
+        f.write("docs/x.md")
+    backend = _FakeBackend(run_started=None)
+
+    asyncio.run(
+        _notify_terminal_state(
+            backend, root=root, instance="i1", role="implementer",
+            marker_path=done_path, kind="done",
+        )
+    )
+    assert len(backend.notifications) == 1
+    assert os.path.isfile(done_path + NOTIFIED_STATE_SUFFIX)
+
+    # Retriggered Stop on the same, unchanged marker: no re-notify.
+    asyncio.run(
+        _notify_terminal_state(
+            backend, root=root, instance="i1", role="implementer",
+            marker_path=done_path, kind="done",
+        )
+    )
+    assert len(backend.notifications) == 1
+
+
+def test_notify_terminal_state_renotifies_on_a_genuinely_new_marker(tmp_path):
+    root, done_path = _prep(tmp_path)
+    with open(done_path, "w") as f:
+        f.write("docs/x.md")
+    backend = _FakeBackend(run_started=None)
+
+    asyncio.run(
+        _notify_terminal_state(
+            backend, root=root, instance="i1", role="implementer",
+            marker_path=done_path, kind="done",
+        )
+    )
+    assert len(backend.notifications) == 1
+
+    # A newer marker (a later run's .done, same path) is not deduped by the
+    # earlier notification - its mtime moves past the .notified sentinel's.
+    with open(done_path, "w") as f:
+        f.write("docs/y.md")
+    future = time.time() + 100
+    os.utime(done_path, (future, future))
+
+    asyncio.run(
+        _notify_terminal_state(
+            backend, root=root, instance="i1", role="implementer",
+            marker_path=done_path, kind="done",
+        )
+    )
+    assert len(backend.notifications) == 2

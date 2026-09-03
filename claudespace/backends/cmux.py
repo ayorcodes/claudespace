@@ -7,13 +7,20 @@ an in-process client library.
 
 cmux exposes no arbitrary per-pane/-workspace key/value store (unlike
 iTerm2's user-variables or tmux's ``@cs_*`` options) - the spike's central
-finding. Identity instead rides the one field the spike proved writable and
-readable back, a pane's tab title (D2): ``cs:<instance>:<role>``, both keys
-the ``@cs_*`` substitute needed. Every other piece of mutable workspace
-state (``auto_handoff``, ``lazy``, ``template``, ``run_doc``/``run_started``)
-is file-homed instead (D3), under the same per-session marker directory
-every pipeline marker already uses - a fresh Stop-hook process rediscovers
-it with zero cmux calls.
+finding. The tab title is the one field the spike proved writable and
+readable back, but it is also the only user-visible display label cmux
+offers (the tab strip), and the two uses collide: identity wants
+``cs:<uuid>:<role>``, display wants ``<slug> · <role>``. Identity now lives
+in the per-instance state file instead (D1) - ``workspace_id`` (the cmux
+workspace's stable UUID) plus ``surfaces`` (role -> surface ref) - and the
+title is purely display-only, written by ``_launch_pane``/``_relabel``
+(D4). A pre-upgrade session with no ``surfaces`` map in its state falls
+back to parsing the old ``cs:<uuid>:<role>`` title scheme (D2) so it keeps
+routing without being relabeled. Every other piece of mutable workspace
+state (``auto_handoff``, ``lazy``, ``template``, ``run_doc``/``run_started``,
+``slug``) is file-homed the same way (D3), under a per-session state file
+keyed on the (worktree-invariant) instance - a fresh Stop-hook process
+rediscovers it with zero cmux calls beyond resolving the live workspace ref.
 """
 
 from __future__ import annotations
@@ -66,9 +73,10 @@ CMUX_NOT_FOUND_HELP = (
     '"iterm2" in ~/.config/claudespace/config.toml.'
 )
 
-# D2: only a title matching this exactly is treated as ours - anything else
-# (user-renamed, a foreign workspace's own tab) degrades to "not found"
-# rather than a crash or misroute (Validation).
+# D2 migration fallback only (D1 moved identity to state) - only a title
+# matching this exactly is treated as ours - anything else (user-renamed, a
+# foreign workspace's own tab, or a post-upgrade session's now display-only
+# title) degrades to "not found" rather than a crash or misroute (Validation).
 #
 # Deviation from D2 as written: the design's own text shortens this to the
 # first 8 hex chars of the instance ("matching the tmux session-name
@@ -164,6 +172,41 @@ def _write_state(instance: str, state: dict[str, Any]) -> None:
         json.dump(state, f)
 
 
+def _each_state() -> dict[str, dict[str, Any]]:
+    """Every session's on-disk state, keyed by instance - the reverse index
+    the instance-less ``find_workspace(marker)`` lookup needs (D1's Edge
+    Cases: marker -> live workspace -> its ``workspace_id`` -> the matching
+    state file's instance)."""
+    result: dict[str, dict[str, Any]] = {}
+    try:
+        names = os.listdir(_state_dir())
+    except FileNotFoundError:
+        return result
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        instance = name[: -len(".json")]
+        state = _read_state(instance)
+        if state:
+            result[instance] = state
+    return result
+
+
+def _derive_slug(doc: str) -> str:
+    """The display slug FR4 wants captured once from the first ``run_doc``:
+    the doc's basename without extension (Validation). ``doc`` is already a
+    project-root-relative path normalized by ``pipeline._normalize_artifact``
+    by the time it reaches ``set_run_doc``."""
+    return os.path.splitext(os.path.basename(doc))[0]
+
+
+def _display_title(state: dict[str, Any], instance: str, role: str) -> str:
+    """``<slug or instance8> · <role>`` (D4) - never the bare identity title,
+    and never a blank label even before a slug exists (FR1)."""
+    label = state.get("slug") or instance[:8]
+    return f"{label} · {role}"
+
+
 # Seed dimensions for a lazy workspace's virtual pane-geometry model. cmux's
 # surface.list carries no real geometry (spike A7), and there is no
 # balance/tile verb, so - unlike tmux/iTerm2, which measure panes and split
@@ -231,12 +274,22 @@ class CmuxBackend(TerminalBackend):
         self, marker: str
     ) -> tuple[str, str, str] | None:
         """``(workspace_ref, workspace_id, instance)`` for the workspace
-        whose ``current_directory == marker``, reading its instance back
-        from any ``cs:*:*`` surface title it holds (D2's instance-less
-        lookup, used by the attach-or-build dedup)."""
+        whose ``current_directory == marker`` (D1's instance-less lookup,
+        used by the attach-or-build dedup).
+
+        State-first: reverse-maps the live workspace's ``workspace_id`` to
+        whichever on-disk state file claims it (Edge Cases: "marker -> the
+        live workspace -> its workspace_id -> the matching state file's
+        instance"). Falls back to the D2 ``cs:*:*`` title scan only when no
+        state file claims this workspace - a pre-upgrade session.
+        """
+        states = _each_state()
         for ws in await cmux_cli.workspace_list():
             if ws.get("current_directory") != marker:
                 continue
+            for candidate_instance, state in states.items():
+                if state.get("workspace_id") == ws["id"]:
+                    return ws["ref"], ws["id"], candidate_instance
             for surface in await cmux_cli.surface_list(ws["id"]):
                 parsed = _parse_title(surface.get("title") or "")
                 if parsed:
@@ -244,9 +297,24 @@ class CmuxBackend(TerminalBackend):
         return None
 
     async def _find_by_instance(self, instance: str) -> tuple[str, str] | None:
-        """``(workspace_ref, workspace_id)`` for whichever workspace holds a
-        surface titled ``cs:<instance>:*`` - the authoritative, instance-keyed
-        lookup every handoff/watchdog call uses (D2)."""
+        """``(workspace_ref, workspace_id)`` for ``instance``'s workspace -
+        the authoritative, instance-keyed lookup every handoff/watchdog call
+        uses (D1).
+
+        State-first: resolves the *live* ``workspace:N`` ref by matching the
+        stable ``workspace_id`` recorded in state, so a cmux restart that
+        reassigns refs self-heals (Edge Cases). Falls back to the D2
+        ``cs:<instance>:*`` title scan only when the state has no
+        ``workspace_id`` at all - a pre-upgrade session (D2).
+        """
+        state = _read_state(instance)
+        workspace_id = state.get("workspace_id")
+        if workspace_id:
+            for ws in await cmux_cli.workspace_list():
+                if ws.get("id") == workspace_id:
+                    return ws["ref"], workspace_id
+            return None
+
         for ws in await cmux_cli.workspace_list():
             for surface in await cmux_cli.surface_list(ws["id"]):
                 parsed = _parse_title(surface.get("title") or "")
@@ -297,11 +365,19 @@ class CmuxBackend(TerminalBackend):
         think: bool,
         max_items: int,
     ) -> None:
+        # D4: the display title (fallback instance8, or the slug once one is
+        # captured - whichever the state currently has) and the surface
+        # recording that makes this pane state-first discoverable both come
+        # from the same read-modify-write, so a pane revealed lazily after
+        # the slug is known is born with the slug label already applied.
+        state = _read_state(instance)
         await cmux_cli.rename_tab(
             workspace_ref=pane.workspace_ref,
             surface_ref=pane.surface_ref,
-            title=_pane_title(instance, pane_cfg.role),
+            title=_display_title(state, instance, pane_cfg.role),
         )
+        state.setdefault("surfaces", {})[pane_cfg.role] = pane.surface_ref
+        _write_state(instance, state)
 
         banner = f"{banner_command(pane_cfg.role)} && " if pane_cfg.role in ROLE_THEMES else ""
         command = command_with_baked_persona(pane_cfg.role, pane_cfg.command)
@@ -378,11 +454,32 @@ class CmuxBackend(TerminalBackend):
         instance = str(uuid.uuid4())
         root_dir = resolve_root(root)
         workspace_ref = await cmux_cli.workspace_create(root_dir)
-        _workspace_id, root_surface_ref = await self._locate_fresh_workspace(workspace_ref)
+        workspace_id, root_surface_ref = await self._locate_fresh_workspace(workspace_ref)
         root_pane = CmuxPane(surface_ref=root_surface_ref, workspace_ref=workspace_ref)
+
+        # D4: before a slug exists the sidebar shows the truncated instance,
+        # same fallback convention as a tab's display title - never a blank
+        # or full-UUID label.
+        await cmux_cli.rename_workspace(workspace_ref=workspace_ref, title=instance[:8])
 
         if lazy:
             entry_pane_cfg = next(p for p in template.panes if p.role == template.entry_role)
+            _write_state(
+                instance,
+                {
+                    "auto_handoff": auto_handoff,
+                    "lazy": True,
+                    "template": template_name,
+                    "run_doc": None,
+                    "run_started": None,
+                    "workspace_id": workspace_id,
+                    "surfaces": {},
+                    "slug": None,
+                    # Seed the virtual pane-geometry model reveal_role balances
+                    # against - the entry pane owns the whole workspace so far.
+                    "panes": {root_pane.surface_ref: list(_SEED_DIMS)},
+                },
+            )
             await self._launch_pane(
                 root_pane,
                 instance=instance,
@@ -392,19 +489,6 @@ class CmuxBackend(TerminalBackend):
                 max_items=max_items,
             )
             await self._prefill_role_command(entry_pane_cfg.role, root_pane)
-            _write_state(
-                instance,
-                {
-                    "auto_handoff": auto_handoff,
-                    "lazy": True,
-                    "template": template_name,
-                    "run_doc": None,
-                    "run_started": None,
-                    # Seed the virtual pane-geometry model reveal_role balances
-                    # against - the entry pane owns the whole workspace so far.
-                    "panes": {root_pane.surface_ref: list(_SEED_DIMS)},
-                },
-            )
             return CmuxWindow(workspace_ref=workspace_ref, instance=instance)
 
         layout = get_layout(template.layout)
@@ -414,6 +498,20 @@ class CmuxBackend(TerminalBackend):
                 f"Template panes {sorted(configured_roles)} do not match "
                 f"layout '{template.layout}' roles {sorted(layout.roles)}"
             )
+
+        _write_state(
+            instance,
+            {
+                "auto_handoff": auto_handoff,
+                "lazy": False,
+                "template": template_name,
+                "run_doc": None,
+                "run_started": None,
+                "workspace_id": workspace_id,
+                "surfaces": {},
+                "slug": None,
+            },
+        )
 
         panes_by_role = await layout.build(self, root_pane)
 
@@ -430,16 +528,6 @@ class CmuxBackend(TerminalBackend):
         for pane_cfg in template.panes:
             await self._prefill_role_command(pane_cfg.role, panes_by_role[pane_cfg.role])
 
-        _write_state(
-            instance,
-            {
-                "auto_handoff": auto_handoff,
-                "lazy": False,
-                "template": template_name,
-                "run_doc": None,
-                "run_started": None,
-            },
-        )
         return CmuxWindow(workspace_ref=workspace_ref, instance=instance)
 
     # -- lookups ---------------------------------------------------------------
@@ -463,6 +551,27 @@ class CmuxBackend(TerminalBackend):
         resolved_instance = await self._resolve_instance(marker, instance)
         if resolved_instance is None:
             return None
+
+        state = _read_state(resolved_instance)
+        surfaces = state.get("surfaces")
+        if surfaces is not None:
+            # D1 state-first: a role absent from the map (never launched /
+            # revealed) or a recorded surface the user closed both degrade to
+            # "not found" (Validation) - never fall through to the D2 title
+            # scan, since a post-upgrade pane's title is display-only.
+            surface_ref = surfaces.get(role)
+            if surface_ref is None:
+                return None
+            located = await self._find_by_instance(resolved_instance)
+            if located is None:
+                return None
+            workspace_ref, workspace_id = located
+            live = {s.get("ref") for s in await cmux_cli.surface_list(workspace_id)}
+            if surface_ref not in live:
+                return None
+            return CmuxPane(surface_ref=surface_ref, workspace_ref=workspace_ref)
+
+        # D2 migration fallback: no surfaces map - a pre-upgrade session.
         located = await self._find_by_instance(resolved_instance)
         if located is None:
             return None
@@ -483,6 +592,17 @@ class CmuxBackend(TerminalBackend):
         if located is None:
             return
         workspace_ref, workspace_id = located
+
+        state = _read_state(resolved_instance)
+        surfaces = state.get("surfaces")
+        if surfaces is not None:
+            live = {s.get("ref") for s in await cmux_cli.surface_list(workspace_id)}
+            for role, surface_ref in surfaces.items():
+                if surface_ref in live:
+                    yield role, CmuxPane(surface_ref=surface_ref, workspace_ref=workspace_ref)
+            return
+
+        # D2 migration fallback: no surfaces map - a pre-upgrade session.
         for surface in await cmux_cli.surface_list(workspace_id):
             parsed = _parse_title(surface.get("title") or "")
             if parsed and parsed[0] == resolved_instance:
@@ -601,7 +721,42 @@ class CmuxBackend(TerminalBackend):
         state = _read_state(resolved)
         state["run_doc"] = doc
         state["run_started"] = started_at
+
+        # D3: captured once, from whichever run_doc is the first to yield a
+        # non-empty slug - held stable afterwards (FR4/AC3). A degenerate
+        # doc (empty basename) leaves the slug unset rather than locking in
+        # a blank label (Edge Cases: "never blank, FR1"), so a later
+        # set_run_doc call gets another chance to derive one.
+        #
+        # D2: gated on the presence of a surfaces map - a pre-upgrade
+        # session (no "surfaces" key at all) still carries its
+        # identity-bearing cs:<uuid>:<role> title and must never be
+        # relabeled, so it gets no slug captured either.
+        new_slug = None
+        if "surfaces" in state and not state.get("slug") and doc:
+            derived = _derive_slug(doc)
+            if derived:
+                state["slug"] = derived
+                new_slug = derived
+
         _write_state(resolved, state)
+
+        if new_slug:
+            await self._relabel(resolved, new_slug, state.get("surfaces") or {})
+
+    async def _relabel(self, instance: str, slug: str, surfaces: dict[str, str]) -> None:
+        """D4: rename the workspace sidebar and every recorded surface's tab
+        to the newly captured slug - resolves the *live* workspace ref via
+        ``_find_by_instance`` (D1) so a stale stored ref can't misfire."""
+        located = await self._find_by_instance(instance)
+        if located is None:
+            return
+        workspace_ref, _workspace_id = located
+        await cmux_cli.rename_workspace(workspace_ref=workspace_ref, title=slug)
+        for role, surface_ref in surfaces.items():
+            await cmux_cli.rename_tab(
+                workspace_ref=workspace_ref, surface_ref=surface_ref, title=f"{slug} · {role}"
+            )
 
     # -- layout / reveal -----------------------------------------------------------
 
@@ -654,6 +809,36 @@ class CmuxBackend(TerminalBackend):
             max_items=DEFAULT_MAX_ITEMS,
         )
         return new_pane
+
+    # -- notifications -----------------------------------------------------------
+
+    async def notify(
+        self,
+        *,
+        title: str,
+        message: str,
+        marker: str | None = None,
+        instance: str | None = None,
+    ) -> None:
+        """D5: cmux's first-class, workspace-targeted ``notify`` in place of
+        the base class's ``osascript`` default - queryable/persisted read
+        state on the session's own workspace, rather than a fire-and-forget
+        OS popup. Resolves the live workspace ref the same way every other
+        lookup does (instance preferred; falls back to ``marker`` for a
+        caller that only has one - mirrors ``_resolve_instance``). Best
+        effort: unresolvable target just omits ``--workspace`` rather than
+        skipping the notification outright.
+        """
+        workspace_ref = None
+        if instance is not None:
+            located = await self._find_by_instance(instance)
+            if located is not None:
+                workspace_ref, _workspace_id = located
+        elif marker is not None:
+            found = await self._find_workspace_ref_and_instance(marker)
+            if found is not None:
+                workspace_ref = found[0]
+        await cmux_cli.notify(title=title, body=message, workspace_ref=workspace_ref)
 
     # -- watchdog --------------------------------------------------------------------
 
