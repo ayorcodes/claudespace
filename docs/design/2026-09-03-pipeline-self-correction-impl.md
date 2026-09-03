@@ -1,6 +1,6 @@
 # Implementation Design: Pipeline self-correction (R1–R5)
 
-Status: **Ready for implementation**. Date: 2026-09-03.
+Status: **Implemented** (reviewed PASS, commit `979c8cc`). Date: 2026-09-03.
 
 # References
 

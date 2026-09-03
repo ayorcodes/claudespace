@@ -286,6 +286,27 @@ def think_marker_path(root: str, instance: str | None = None) -> str:
     return f"{session_marker_dir(resolve_root(root, instance), instance)}/think"
 
 
+def think_active(root: str, instance: str | None = None) -> bool:
+    """Whether a pane launched now should run autonomous (``--think``).
+
+    The same check every role's prompt makes: the ``think`` marker exists, or
+    ``CLAUDESPACE_THINK`` is ``1`` in the environment. Backends call this when
+    revealing a lazy pane, and the env fallback is what keeps that correct
+    across a git worktree. The marker is written under the *original* checkout
+    at build time (``workspace._set_think``); once a role follows a worktree it
+    re-exports ``CLAUDESPACE_ROOT`` into the worktree, so
+    ``think_marker_path`` then points at a session dir the marker was never
+    written to. The handoff hook doing the reveal runs inside the *stopping*
+    pane, though, whose ``CLAUDESPACE_THINK`` env was set at its own launch and
+    travels with it regardless of cwd/worktree - so a ``--think`` run keeps
+    revealing autonomous panes even after a worktree redirect, matching how the
+    revealed pane's own prompt then reads its autonomy back.
+    """
+    if os.path.isfile(think_marker_path(root, instance)):
+        return True
+    return os.environ.get("CLAUDESPACE_THINK") == "1"
+
+
 # Panes that accumulate per-feature context and need clearing when a fresh
 # researcher.done starts a new topic in an already-used workspace. Excludes
 # researcher, which is normally the *source* of that marker - wiping it

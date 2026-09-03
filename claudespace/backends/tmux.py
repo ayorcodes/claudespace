@@ -50,7 +50,7 @@ from claudespace.backends.common import (
 )
 from claudespace.config import CANONICAL_PANES, PaneConfig, Template
 from claudespace.layouts import get_layout
-from claudespace.pipeline import resolve_root, think_marker_path
+from claudespace.pipeline import resolve_root, think_active
 from claudespace.themes import ROLE_THEMES, banner_command
 
 logger = logging.getLogger(__name__)
@@ -700,7 +700,7 @@ class TmuxBackend(TerminalBackend):
             pane_cfg=pane_cfg,
             auto_handoff=auto_handoff,
             lazy=True,
-            think=os.path.isfile(think_marker_path(root, instance)),
+            think=think_active(root, instance),
             max_items=DEFAULT_MAX_ITEMS,
         )
         return new_pane

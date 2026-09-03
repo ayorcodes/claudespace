@@ -373,6 +373,15 @@ async def _reveal_destination(
     """
     template_name = await backend.get_template_name(marker=root, instance=instance)
     if template_name is None:
+        logger.warning(
+            "Cannot reveal '%s' for workspace '%s' (instance '%s'): no "
+            "workspace state found, so the destination pane can't be launched "
+            "- the handoff is being skipped. This usually means the backend's "
+            "workspace state couldn't be located for this root.",
+            destination_role,
+            root,
+            instance,
+        )
         return None
 
     template = get_template(template_name)
