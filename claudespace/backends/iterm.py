@@ -44,7 +44,7 @@ from claudespace.backends.common import (
 )
 from claudespace.config import CANONICAL_PANES, PaneConfig, Template
 from claudespace.layouts import get_layout
-from claudespace.pipeline import resolve_root, think_marker_path
+from claudespace.pipeline import resolve_root, think_active
 from claudespace.themes import ROLE_THEMES, banner_command, build_role_profile
 
 logger = logging.getLogger(__name__)
@@ -800,7 +800,7 @@ class ItermBackend(TerminalBackend):
             # variable: --think is toggleable on an already-open workspace
             # (see workspace._set_think), so the folder is the source of
             # truth.
-            think=os.path.isfile(think_marker_path(root, instance)),
+            think=think_active(root, instance),
             max_items=DEFAULT_MAX_ITEMS,
         )
         return session

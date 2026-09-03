@@ -18,6 +18,7 @@ from claudespace.pipeline import (
     parse_done_marker,
     resolve_root,
     session_marker_dir,
+    think_active,
     think_marker_path,
     worktree_marker_path,
 )
@@ -185,3 +186,40 @@ def test_resolve_root_with_instance_reads_the_scoped_worktree_pointer(tmp_path):
     assert resolve_root(str(root), "id") == str(worktree)
     # the unscoped, 1-arg form still reads only the flat pointer
     assert resolve_root(str(root)) == str(root)
+
+
+class TestThinkActive:
+    """``think_active`` decides whether a *revealed* pane launches autonomous.
+
+    The file-only check regressed under a git worktree: the ``think`` marker
+    is written under the original checkout at build, but the reveal happens
+    with ``CLAUDESPACE_ROOT`` re-exported into the worktree, so the marker
+    lookup misses and a ``--think`` run silently revealed non-autonomous
+    panes. The env fallback (the stopping pane's worktree-invariant
+    ``CLAUDESPACE_THINK``) is the fix.
+    """
+
+    def test_true_when_marker_file_present(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDESPACE_THINK", raising=False)
+        (tmp_path / ".claudespace" / "s" / "id").mkdir(parents=True)
+        (tmp_path / ".claudespace" / "s" / "id" / "think").write_text("autonomous\n")
+        assert think_active(str(tmp_path), "id") is True
+
+    def test_false_when_neither_marker_nor_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDESPACE_THINK", raising=False)
+        assert think_active(str(tmp_path), "id") is False
+
+    def test_env_fallback_covers_a_missing_marker_across_a_worktree(self, tmp_path, monkeypatch):
+        # The regression: the worktree's session dir has no think marker (it
+        # was written under the original checkout), but the stopping pane's
+        # CLAUDESPACE_THINK travels with it - so the revealed pane is still
+        # autonomous. Before the env fallback this returned False.
+        monkeypatch.setenv("CLAUDESPACE_THINK", "1")
+        worktree = tmp_path / "worktrees" / "feature"
+        worktree.mkdir(parents=True)
+        assert not (worktree / ".claudespace" / "s" / "id" / "think").exists()
+        assert think_active(str(worktree), "id") is True
+
+    def test_env_zero_is_not_autonomous(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDESPACE_THINK", "0")
+        assert think_active(str(tmp_path), "id") is False

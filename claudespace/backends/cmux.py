@@ -50,7 +50,7 @@ from claudespace.backends.common import (
 )
 from claudespace.config import CANONICAL_PANES, PaneConfig, Template
 from claudespace.layouts import get_layout
-from claudespace.pipeline import resolve_root, session_marker_dir, think_marker_path
+from claudespace.pipeline import resolve_root, think_active
 from claudespace.themes import ROLE_THEMES, banner_command
 
 logger = logging.getLogger(__name__)
@@ -75,10 +75,9 @@ CMUX_NOT_FOUND_HELP = (
 # convention"), but tmux's *session name* is cosmetic there - identity/
 # lookup on that backend keys off the full, untruncated `@cs_instance` pane
 # option. cmux has no such second channel: the tab title is simultaneously
-# the only display label and the only identity mechanism, and several
-# widely-shared callers outside this backend (`workspace.py`'s `--think`
-# toggle -> `pipeline.think_marker_path`, and this module's own
-# `workspace-state.json` path) need `Window.instance`/`CmuxPane`'s instance
+# the only display label and the only identity mechanism, and a widely-shared
+# caller outside this backend (`workspace.py`'s `--think` toggle ->
+# `pipeline.think_marker_path`) needs `Window.instance`/`CmuxPane`'s instance
 # back in *full* to build `session_marker_dir(marker, instance)` correctly -
 # an 8-char prefix there points at a directory no pane's env actually uses,
 # silently breaking `--think` on an already-open cmux workspace. Carrying
@@ -119,24 +118,47 @@ class CmuxWindow:
     instance: str
 
 
-def _state_path(marker: str, instance: str) -> str:
-    """D3: ``<session_marker_dir(marker, instance)>/workspace-state.json``.
-    ``marker`` is already the resolved root by the time any backend method
-    sees it (``workspace.py`` passes ``resolved_root`` as ``marker``), so
-    this is a pure function of the two - no further resolution needed."""
-    return os.path.join(session_marker_dir(marker, instance), STATE_FILE_NAME)
+def _state_dir() -> str:
+    """User-level directory holding the cmux backend's per-session runtime
+    state, honouring ``XDG_STATE_HOME`` (default ``~/.local/state``)."""
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "claudespace", "cmux")
 
 
-def _read_state(marker: str, instance: str) -> dict[str, Any]:
+def _state_path(instance: str) -> str:
+    """Path to one session's runtime state (``auto_handoff``/``lazy``/
+    ``template``/``run_doc``), keyed on the session ``instance`` alone at a
+    fixed user-level location - deliberately NOT under the repo's
+    ``.claudespace/`` tree.
+
+    This state used to live at ``session_marker_dir(marker, instance)/...``,
+    i.e. under the repo root addressed by ``CLAUDESPACE_ROOT``. That silently
+    broke lazy reveal across a git worktree: ``build_workspace`` writes this
+    state before any worktree exists (under the original checkout), but once a
+    role follows a worktree it re-exports ``CLAUDESPACE_ROOT`` into the
+    worktree, so the handoff hook then reads
+    ``<worktree>/.claudespace/s/<instance>/...`` where nothing was ever
+    written. ``get_template_name`` returned ``None`` and
+    ``handoff._reveal_destination`` bailed, so the next role's pane never
+    appeared. The tmux/iTerm2 backends never hit this because they keep the
+    same state as pane options that travel with the pane, off the repo tree
+    entirely. The ``instance`` is worktree-invariant too (it is in every
+    pane's env and every surface title), so keying on it alone is reachable
+    from any pane regardless of cwd or worktree.
+    """
+    return os.path.join(_state_dir(), f"{instance}.json")
+
+
+def _read_state(instance: str) -> dict[str, Any]:
     try:
-        with open(_state_path(marker, instance)) as f:
+        with open(_state_path(instance)) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def _write_state(marker: str, instance: str, state: dict[str, Any]) -> None:
-    path = _state_path(marker, instance)
+def _write_state(instance: str, state: dict[str, Any]) -> None:
+    path = _state_path(instance)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(state, f)
@@ -334,7 +356,6 @@ class CmuxBackend(TerminalBackend):
             )
             await self._prefill_role_command(entry_pane_cfg.role, root_pane)
             _write_state(
-                marker,
                 instance,
                 {
                     "auto_handoff": auto_handoff,
@@ -370,7 +391,6 @@ class CmuxBackend(TerminalBackend):
             await self._prefill_role_command(pane_cfg.role, panes_by_role[pane_cfg.role])
 
         _write_state(
-            marker,
             instance,
             {
                 "auto_handoff": auto_handoff,
@@ -505,13 +525,13 @@ class CmuxBackend(TerminalBackend):
         resolved = await self._resolve_instance(marker, instance)
         if resolved is None:
             return False
-        return bool(_read_state(marker, resolved).get("auto_handoff", False))
+        return bool(_read_state(resolved).get("auto_handoff", False))
 
     async def get_lazy(self, *, marker: str, instance: str | None = None) -> bool:
         resolved = await self._resolve_instance(marker, instance)
         if resolved is None:
             return False
-        return bool(_read_state(marker, resolved).get("lazy", False))
+        return bool(_read_state(resolved).get("lazy", False))
 
     async def get_template_name(
         self, *, marker: str, instance: str | None = None
@@ -519,7 +539,7 @@ class CmuxBackend(TerminalBackend):
         resolved = await self._resolve_instance(marker, instance)
         if resolved is None:
             return None
-        return _read_state(marker, resolved).get("template") or None
+        return _read_state(resolved).get("template") or None
 
     async def get_run_doc(
         self, *, marker: str, instance: str | None = None
@@ -527,7 +547,7 @@ class CmuxBackend(TerminalBackend):
         resolved = await self._resolve_instance(marker, instance)
         if resolved is None:
             return None, None
-        state = _read_state(marker, resolved)
+        state = _read_state(resolved)
         doc = state.get("run_doc") or None
         started = state.get("run_started")
         return doc, float(started) if started else None
@@ -538,10 +558,10 @@ class CmuxBackend(TerminalBackend):
         resolved = await self._resolve_instance(marker, instance)
         if resolved is None:
             return
-        state = _read_state(marker, resolved)
+        state = _read_state(resolved)
         state["run_doc"] = doc
         state["run_started"] = started_at
-        _write_state(marker, resolved, state)
+        _write_state(resolved, state)
 
     # -- layout / reveal -----------------------------------------------------------
 
@@ -573,7 +593,7 @@ class CmuxBackend(TerminalBackend):
             instance=instance,
             root=root,
             pane_cfg=pane_cfg,
-            think=os.path.isfile(think_marker_path(root, instance)),
+            think=think_active(root, instance),
             max_items=DEFAULT_MAX_ITEMS,
         )
         return new_pane

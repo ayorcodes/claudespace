@@ -50,8 +50,7 @@ class TestTitleHelpers:
     def test_pane_title_carries_the_full_instance_uuid(self):
         # Not truncated to 8 hex chars (unlike tmux's cosmetic session-name
         # suffix): Window.instance must round-trip in full, since
-        # workspace.py's --think toggle and this backend's own
-        # workspace-state.json path both build session_marker_dir(marker,
+        # workspace.py's --think toggle builds session_marker_dir(marker,
         # instance) from it - a truncated id would point at a directory no
         # pane's env actually uses.
         instance = "abcd1234-5678-90ab-cdef-1234567890ab"
