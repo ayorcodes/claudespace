@@ -14,18 +14,20 @@ import os
 from claudespace.backends.base import TerminalBackend
 from claudespace.backends.common import DEFAULT_MAX_ITEMS
 from claudespace.config import get_template
-from claudespace.pipeline import MARKER_DIR, think_marker_path
+from claudespace.pipeline import MARKER_DIR, session_marker_dir, think_marker_path
 
 logger = logging.getLogger(__name__)
 
 
-def _set_think(root: str, think: bool) -> None:
+def _set_think(root: str, instance: str, think: bool) -> None:
     """Create or remove ``root``'s ``think`` marker (see
     ``think_marker_path``) so the flag's state is a property of the
-    workspace folder, readable by any role's pane at any point in the run.
+    workspace's session, readable by any role's pane at any point in the
+    run. Scoped by ``instance`` so two sessions on one root toggle
+    independently (D4).
     """
-    os.makedirs(os.path.join(root, MARKER_DIR), exist_ok=True)
-    marker = think_marker_path(root)
+    os.makedirs(session_marker_dir(root, instance), exist_ok=True)
+    marker = think_marker_path(root, instance)
     if think:
         with open(marker, "w", encoding="utf-8") as handle:
             handle.write("autonomous\n")
@@ -53,16 +55,16 @@ async def open_workspace(
     resolved_root = os.path.abspath(os.path.expanduser(root))
     template = get_template(template_name)
 
-    # Written before the attach check, not just on build, so `claudespace
-    # --think` on an already-open workspace switches it into autonomous
-    # mode (and a plain re-run switches it back out) - the roles read the
-    # marker at handoff time, so it takes effect from the next stage on.
-    _set_think(resolved_root, think)
-
     if not force_new:
         existing = await backend.find_workspace(resolved_root)
         if existing is not None:
             logger.info("Workspace '%s' already exists - attaching", resolved_root)
+            # So `claudespace --think` on an already-open workspace switches
+            # it into autonomous mode (and a plain re-run switches it back
+            # out) - the roles read the marker at handoff time, so it takes
+            # effect from the next stage on. Scoped to the live workspace's
+            # own instance, discovered via find_workspace.
+            _set_think(resolved_root, existing.instance, think)
             await backend.activate_window(existing)
             return
 
@@ -86,6 +88,7 @@ async def open_workspace(
         think=think,
         max_items=max_items,
     )
+    _set_think(resolved_root, window.instance, think)
     await backend.activate_window(window)
 
     for stray in stray_windows:

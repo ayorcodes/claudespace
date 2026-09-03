@@ -108,6 +108,13 @@ def test_instance_filter_rejects_a_same_root_pane_in_another_window(monkeypatch)
     )
 
 
+def test_find_workspace_stamps_instance_from_the_matched_session(monkeypatch):
+    app = FakeApp(_pane(instance="abc-123"))
+    backend = _backend_for(app, monkeypatch)
+    window = asyncio.run(backend.find_workspace("/root"))
+    assert window.instance == "abc-123"
+
+
 class TestRolePromptPrefix:
     def test_no_prefix_when_the_persona_is_baked_in(self, tmp_path, monkeypatch):
         monkeypatch.setattr(common, "PROMPTS_DEST", tmp_path)

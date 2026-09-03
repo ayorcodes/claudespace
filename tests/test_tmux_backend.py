@@ -251,6 +251,7 @@ class TestFindAndReveal:
             found = await backend.find_workspace(marker)
             assert found is not None
             assert found.session == window.session
+            assert found.instance == window.instance
 
             pane = await backend.find_role_pane(marker=marker, role="planner")
             assert pane is not None

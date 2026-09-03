@@ -284,12 +284,17 @@ async def _find_workspace_window(app: "iterm2.App", marker: str) -> "iterm2.Wind
     Scans every session of every tab of every window for the workspace
     marker variable. Returns the first match's window - a workspace is
     treated as a single window, so any tagged session identifies it.
+    ``window.instance`` is stamped from the matched session's
+    ``INSTANCE_VAR`` before returning, so a caller with only the ``Window``
+    (e.g. the ``--think`` toggle) can scope marker paths without a second
+    lookup.
     """
     for window in app.windows:
         for tab in window.tabs:
             for session in tab.sessions:
                 value = await session.async_get_variable(WORKSPACE_VAR)
                 if value == marker:
+                    window.instance = await session.async_get_variable(INSTANCE_VAR) or ""
                     return window
     return None
 
@@ -599,6 +604,7 @@ class ItermBackend(TerminalBackend):
             raise RuntimeError("iTerm2 refused to create a new window")
 
         instance = str(uuid.uuid4())
+        window.instance = instance
         root_session = await _wait_for_current_session(window)
 
         if lazy:
@@ -794,7 +800,7 @@ class ItermBackend(TerminalBackend):
             # variable: --think is toggleable on an already-open workspace
             # (see workspace._set_think), so the folder is the source of
             # truth.
-            think=os.path.isfile(think_marker_path(root)),
+            think=os.path.isfile(think_marker_path(root, instance)),
             max_items=DEFAULT_MAX_ITEMS,
         )
         return session
