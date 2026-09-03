@@ -1,7 +1,8 @@
 # Implementation Design: backend-aware install/doctor terminal detection
 
-Status: **Accepted** — ready for implementation (Increment 1). Increment 2
-(cmux) is gated; see Architecture Decisions AD4 and Implementation Order.
+Status: **Implemented** (Increment 1; reviewed PASS, commit `5a34180`,
+PR #12). Increment 2 (cmux) remains gated; see Architecture Decisions AD4
+and Implementation Order.
 
 Date: 2026-09-03
 
