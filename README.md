@@ -89,23 +89,27 @@ claudespace --new                # force a new window even if one exists
 claudespace --template agentic   # unattended multi-feature run
 claudespace --list-templates     # show available templates
 
-claudespace --manual             # don't auto-submit handoffs; you press enter
-claudespace --think              # autonomous: roles decide open questions themselves
+claudespace --manual             # fully supervised: no auto-submit handoffs, no autonomous decisions
 claudespace --lazy               # start with one pane; others appear as work reaches them
+claudespace --restore            # list tmux-backed sessions and pick one to attach to
 ```
+
+Autonomous mode (roles decide open questions themselves instead of asking
+you) is **on by default** - pass `--manual` to turn it off and get asked.
+`--think` still exists (redundant now, kept for explicit scripts).
 
 **The combination worth knowing:**
 
 ```
-claudespace --lazy --new --think
+claudespace --lazy --new --tmux
 ```
 
 A fresh window (`--new`), starting as a single `researcher` pane rather than a
 six-way split (`--lazy`) - each further pane splits into existence only when
-work actually reaches it, so you're never looking at five idle terminals. And
-`--think` means nothing stops to ask you a question: roles that would normally
-pause decide for themselves and write the decision down, so you can start it
-and walk away. Give it a task and come back to a review.
+work actually reaches it, so you're never looking at five idle terminals - in
+Ghostty via the tmux backend (`--tmux`). Roles decide open questions
+themselves and write the decision down (the default), so you can start it and
+walk away. Give it a task and come back to a review.
 
 Maintenance:
 
@@ -318,23 +322,25 @@ Brief back to planner, reviewer returning CHANGES REQUIRED to implementer)
 follows the same toggle: auto-submitted by default, prefill-only under
 `--manual`.
 
-### `--think` (autonomous mode)
+### Autonomous mode (on by default)
 
-The planner normally stops and asks when a product question materially
-affects scope or acceptance criteria. `claudespace --think` turns that off:
-the planner still writes each question down, but answers it itself the way
-a 30-year staff engineer at a top-tier shop would - conventional choice,
-smallest blast radius, scope narrowed rather than widened - and records it
-in the Planning Brief's **Assumptions** as `Q: ... -> A: ... (decided
+The planner would otherwise stop and ask when a product question materially
+affects scope or acceptance criteria - by default it doesn't: the planner
+still writes each question down, but answers it itself the way a 30-year
+staff engineer at a top-tier shop would - conventional choice, smallest
+blast radius, scope narrowed rather than widened - and records it in the
+Planning Brief's **Assumptions** as `Q: ... -> A: ... (decided
 autonomously)` so you can audit or reverse any single call later. Only
 questions nobody could answer yet (business/legal/pricing, external
 dependencies) stay in **Open Questions**, and the pipeline continues past
-them.
+them. `--manual` (see above) turns this off, alongside disabling
+auto-submitted handoffs - the pipeline then stops and asks instead of
+deciding for you.
 
-The flag writes a `.claudespace/think` marker (also exported to each pane
-as `CLAUDESPACE_THINK=1`), so it applies to an already-open workspace too:
-re-run `claudespace --think` in the folder to switch the mode on, and a
-plain `claudespace` run to switch it back off.
+The mode is tracked by a `.claudespace/think` marker (also exported to each
+pane as `CLAUDESPACE_THINK=1`), so it applies to an already-open workspace
+too: re-run `claudespace --manual` in the folder to switch it off, and a
+plain `claudespace` run to switch it back on.
 
 ### Bouncing questions, not just rejections
 
@@ -527,6 +533,75 @@ of them without reinstalling:
 **macOS only.** claudespace drives iTerm2's official Python API, which has
 no Windows or Linux equivalent — there is no cross-platform version of this
 tool possible without swapping out the terminal entirely.
+
+### Terminal backend (tmux, for Ghostty)
+
+claudespace drives iTerm2 by default. [Ghostty](https://ghostty.org) is
+supported via an opt-in **tmux backend**: claudespace builds the pipeline as
+a detached tmux session and opens Ghostty attached to it, rather than
+driving Ghostty's own (preview-status) scripting API directly. That gives
+full parity with the iTerm2 experience — confirmed prompt delivery and
+full-fidelity stall detection both need tmux's `capture-pane`, which
+Ghostty's own automation surface doesn't yet expose. Turn it on per-run with
+`--tmux`:
+
+```
+claudespace --tmux
+```
+
+or make it the default by creating `~/.config/claudespace/config.toml`:
+
+```toml
+[terminal]
+backend = "tmux"      # or "iterm2" (the default)
+
+[terminal.tmux]
+viewer = "ghostty"    # which terminal hosts `tmux attach`; default "ghostty"
+```
+
+`--tmux` overrides the config file for that one invocation; without it,
+iTerm2 stays the default. `claudespace watchdog --tmux` follows the same
+rule. Requires `tmux` on `PATH` (`brew install tmux`). Everything works the same
+as on iTerm2 — workspace layout, confirmed prompt delivery, role handoff,
+`claudespace-msg`, and full-fidelity `claudespace watchdog` all run against
+whichever backend is configured. Because the tmux session is detached from
+the viewer, closing the Ghostty window doesn't end the workspace — the
+pipeline keeps running, and `tmux attach -t <session-name>` reattaches to
+it. If tmux isn't installed, or the session can't be launched, claudespace
+fails immediately with a message naming the fix rather than hanging or
+silently falling back to iTerm2.
+
+#### Surviving a reboot
+
+The tmux backend also survives its **server** dying - not just the
+viewer window closing - via vendored, private copies of
+[tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) and
+[tmux-continuum](https://github.com/tmux-plugins/tmux-continuum). They run
+only on claudespace's own dedicated tmux socket, loaded from a generated
+config claudespace owns - your own `~/.tmux.conf` and everyday tmux usage
+are never touched. On by default:
+
+```toml
+[terminal.tmux]
+persist = true                    # default; set false to turn it off
+persist_interval_minutes = 15     # default autosave cadence
+```
+
+After a reboot (or `tmux kill-server`), the next `claudespace --tmux` run
+detects and waits briefly for the autorestore in flight, then attaches to
+the restored workspace instead of building a duplicate - panes, roles, and
+pipeline state (`run_doc`, `auto_handoff`, `lazy`, `template`) all come
+back. Each pane's `claude` process relaunches fresh (a new conversation,
+not the prior one resumed) via the same command line it was originally
+launched with.
+
+Known caveat: continuum's autosave only runs while a viewer is attached
+(it piggybacks on the terminal's own status-bar refresh, not an
+independent timer) - a workspace left with no viewer attached for a long
+stretch won't autosave during that stretch. And a pane saved in the brief
+window between typing its launch command and `claude` actually starting
+may come back as a plain shell rather than a relaunched `claude` - a
+`tmux-resurrect` timing quirk, not something claudespace can fully avoid.
 
 ### Bundled commands and prompts
 

@@ -21,6 +21,7 @@ claudespace = "claudespace.cli:main"
 "claudespace-guard" = "claudespace.guard:main"
 "claudespace-msg" = "claudespace.messaging:main"
 "claudespace-update" = "claudespace.update:main"
+"claudespace-tmux-persist" = "claudespace.backends.tmux_persist:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -36,4 +37,10 @@ testpaths = ["tests"]
 include = ["claudespace*"]
 
 [tool.setuptools.package-data]
-"claudespace.assets" = ["commands/*.md", "prompts/*.md"]
+"claudespace.assets" = [
+    "commands/*.md",
+    "prompts/*.md",
+    "tmux-plugins/**/*.sh",
+    "tmux-plugins/**/*.tmux",
+    "tmux-plugins/**/*.md",
+]

@@ -118,6 +118,20 @@ def _copy_all(src_dir: resources.abc.Traversable, dest_dir: Path) -> int:
     return copied
 
 
+def _copy_tree(src_dir: resources.abc.Traversable, dest_dir: Path) -> int:
+    """Like ``_copy_all`` but recursive - used for the vendored tmux-plugin
+    trees (Increment 2), which are real multi-directory plugin repos, not a
+    flat pile of files. Replaces ``dest_dir`` wholesale each time, same
+    "always overwritten, no local edits preserved" policy as everything
+    else this module syncs.
+    """
+    with resources.as_file(src_dir) as src_path:
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir)
+        shutil.copytree(src_path, dest_dir)
+    return sum(1 for p in dest_dir.rglob("*") if p.is_file())
+
+
 def _hook_already_installed(stop_hooks: list) -> bool:
     for entry in stop_hooks:
         for hook in entry.get("hooks", []):
@@ -357,14 +371,28 @@ def sync_assets() -> None:
     native_seeded = ensure_native_template_seeded()
     agentic_seeded = ensure_agentic_template_seeded()
 
+    # Vendored tmux-resurrect/tmux-continuum (Increment 2) - imported here,
+    # not at module scope, so a pip/pipx install without the tmux backend's
+    # extra surface still imports this module fine (there is no extra
+    # dependency, but this keeps the import graph the same shape as the
+    # rest of the module's lazy backend imports).
+    from claudespace.backends import tmux_persist
+    from claudespace.config import load_tmux_persistence
+
+    plugins_copied = _copy_tree(assets.joinpath("tmux-plugins"), tmux_persist.PLUGINS_DIR)
+    persist, persist_interval_minutes = load_tmux_persistence()
+    tmux_persist.write_conf(persist=persist, interval_minutes=persist_interval_minutes)
+
     logger.info(
         "Synced %d command(s) across %d Claude config dir(s) (%s), "
-        "%d prompt(s) to %s",
+        "%d prompt(s) to %s, %d tmux-plugin file(s) to %s",
         commands_copied,
         len(config_dirs),
         ", ".join(str(d) for d in config_dirs),
         prompts_copied,
         PROMPTS_DEST,
+        plugins_copied,
+        tmux_persist.PLUGINS_DIR,
     )
     if commands_migrated:
         logger.info(

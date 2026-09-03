@@ -13,7 +13,7 @@ sibling cells too (there is no way to carve one rectangle out of a grid
 without the others appearing alongside it), which defeats the point of
 lazy mode (no empty panes). Instead a lazy workspace grows organically:
 each newly revealed pane splits directly off of whichever pane handed off
-to it. See ``iterm.py``'s ``reveal_role``.
+to it. See each backend's ``reveal_role``.
 
 To add a layout: describe its shape as a ``SplitNode`` tree and register it
 in ``LAYOUTS`` below. Nothing else needs to change.
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import iterm2
+    from claudespace.backends.base import Pane, TerminalBackend
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,21 +71,28 @@ class Layout:
     def roles(self) -> frozenset[str]:
         return self.tree.roles()
 
-    async def build(self, root: "iterm2.Session") -> dict[str, "iterm2.Session"]:
-        """Materialize every role's pane, splitting the tree all at once."""
-        sessions: dict[str, "iterm2.Session"] = {}
+    async def build(
+        self, backend: "TerminalBackend", root: "Pane"
+    ) -> dict[str, "Pane"]:
+        """Materialize every role's pane, splitting the tree all at once.
 
-        async def visit(node: SplitNode, session: "iterm2.Session") -> None:
+        ``backend.split_pane`` is the only backend-specific piece - iTerm2
+        and tmux split differently, but the tree shape (which role ends
+        up where) is identical for both.
+        """
+        panes: dict[str, "Pane"] = {}
+
+        async def visit(node: SplitNode, pane: "Pane") -> None:
             if node.role is not None:
-                sessions[node.role] = session
+                panes[node.role] = pane
                 return
             assert node.first is not None and node.second is not None
-            second_session = await session.async_split_pane(vertical=node.vertical)
-            await visit(node.first, session)
-            await visit(node.second, second_session)
+            second_pane = await backend.split_pane(pane, vertical=node.vertical)
+            await visit(node.first, pane)
+            await visit(node.second, second_pane)
 
         await visit(self.tree, root)
-        return sessions
+        return panes
 
 
 # ┌────────────┬──────────────┬──────────────┐

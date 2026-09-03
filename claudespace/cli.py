@@ -7,23 +7,26 @@ import functools
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING
 
 from claudespace import (
     assets_sync,
-    connect,
     environment,
     update,
     utils,
     watchdog,
     workspace,
 )
-from claudespace.config import DEFAULT_TEMPLATE, get_template, list_templates
-from claudespace.iterm import DEFAULT_MAX_ITEMS
+from claudespace.backends import get_backend
+from claudespace.backends.base import TerminalBackend
+from claudespace.backends.common import DEFAULT_MAX_ITEMS
+from claudespace.config import (
+    DEFAULT_TEMPLATE,
+    get_template,
+    list_templates,
+    load_tmux_persistence,
+    load_tmux_viewer,
+)
 from claudespace.watchdog import DEFAULT_INTERVAL_SECONDS, DEFAULT_STALL_AFTER_SECONDS
-
-if TYPE_CHECKING:
-    import iterm2
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,10 @@ logger = logging.getLogger(__name__)
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="claudespace",
-        description="Build or attach to an iTerm2 development workspace for a folder.",
+        description="Build or attach to a terminal development workspace for a "
+        "folder (iTerm2 by default; pass --tmux, or set 'terminal.backend' "
+        "in ~/.config/claudespace/config.toml, for the tmux backend - the "
+        "supported way to run claudespace in Ghostty).",
     )
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser(
@@ -44,7 +50,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Check and repair everything claudespace needs: the claude CLI, "
         "iTerm2, and iTerm2's Python API. Run automatically by install.sh so "
         "the one-time setup happens at install time rather than partway "
-        "through your first real run.",
+        "through your first real run. Only checks the iTerm2 backend - the "
+        "tmux backend's own preflight (tmux installed/new enough) runs at "
+        "build time instead (see 'terminal.backend').",
     )
     doctor_parser.add_argument(
         "--yes",
@@ -91,7 +99,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_STALL_AFTER_SECONDS,
         help="Seconds of unchanged, non-idle screen output before a pane is "
-        f"flagged as possibly stalled (default: {DEFAULT_STALL_AFTER_SECONDS}).",
+        f"flagged as possibly stalled (default: {DEFAULT_STALL_AFTER_SECONDS}). "
+        "Applies identically on the iTerm2 and tmux backends (AD6).",
+    )
+    watchdog_parser.add_argument(
+        "--tmux",
+        action="store_true",
+        help="Watch a tmux-backed workspace instead of the default iTerm2 "
+        "one. Same effect as [terminal] backend = \"tmux\" in "
+        "~/.config/claudespace/config.toml, for this invocation only.",
     )
     parser.add_argument(
         "--root",
@@ -114,21 +130,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--manual",
         dest="auto_handoff",
         action="store_false",
-        help="Disable auto-handoff: pipeline handoffs between panes "
-        "(researcher->planner->principal->implementer->reviewer), including "
-        "rejected/blocked bounces, only prefill the next pane's input - you "
-        "press enter to advance. By default, all handoffs auto-submit.",
+        help="Fully supervised mode: disables both auto-handoff (pipeline "
+        "handoffs between panes - researcher->planner->principal->"
+        "implementer->reviewer, including rejected/blocked bounces - only "
+        "prefill the next pane's input, you press enter to advance) and "
+        "autonomous (--think) mode. This is the opposite of the default: "
+        "by default all handoffs auto-submit and roles decide autonomously "
+        "instead of stopping to ask you. Use --manual when you're at the "
+        "keyboard and want to stay in the loop on everything.",
     )
     parser.add_argument(
         "--think",
         action="store_true",
-        help="Autonomous mode: roles never stop to ask you clarifying "
-        "questions. The planner, instead of pausing on an open product "
-        "question, answers it the way a 30-year staff engineer at a "
-        "top-tier shop would and records the answer as an explicit "
-        "decision in the Planning Brief. Use when you're away from the "
-        "machine and don't want the pipeline stalling on a prompt. A run "
-        "without this flag turns the mode back off for that workspace.",
+        default=True,
+        help="Autonomous mode (on by default): roles never stop to ask you "
+        "clarifying questions. The planner, instead of pausing on an open "
+        "product question, answers it the way a 30-year staff engineer at "
+        "a top-tier shop would and records the answer as an explicit "
+        "decision in the Planning Brief. This flag is redundant now that "
+        "it's the default - kept for explicitness in scripts. Use "
+        "--manual to turn it back off.",
     )
     parser.add_argument(
         "--lazy",
@@ -149,9 +170,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "conductor pane (e.g. 'native').",
     )
     parser.add_argument(
+        "--tmux",
+        action="store_true",
+        help="Use the tmux backend for this run instead of the default "
+        "iTerm2 (the supported way to run claudespace in Ghostty). Same "
+        "effect as [terminal] backend = \"tmux\" in "
+        "~/.config/claudespace/config.toml, for this invocation only - "
+        "iTerm2 stays the default when this is omitted.",
+    )
+    parser.add_argument(
         "--list-templates",
         action="store_true",
         help="List available template names and exit.",
+    )
+    parser.add_argument(
+        "--restore",
+        action="store_true",
+        help="tmux backend only: list every restorable/running tmux-backed "
+        "workspace (session, root folder, roles present) - waits briefly "
+        "for an in-flight autorestore first, same as a normal attach - "
+        "then prompts which one to attach to. Non-interactive (piped/no "
+        "tty) just lists them and exits without prompting.",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging."
@@ -160,7 +199,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(
-    connection: "iterm2.Connection",
+    backend: TerminalBackend,
     *,
     root: str,
     template: str,
@@ -169,10 +208,10 @@ async def _run(
     lazy: bool,
     think: bool,
     max_items: int,
-    just_launched_iterm: bool,
+    just_launched_terminal: bool,
 ) -> None:
     await workspace.open_workspace(
-        connection,
+        backend,
         root,
         template,
         force_new,
@@ -180,12 +219,104 @@ async def _run(
         lazy=lazy,
         think=think,
         max_items=max_items,
-        just_launched_iterm=just_launched_iterm,
+        just_launched_terminal=just_launched_terminal,
     )
 
 
+async def _fetch_restorable(backend: TerminalBackend, out: list) -> None:
+    from claudespace.backends.tmux import TmuxBackend
+
+    assert isinstance(backend, TmuxBackend)  # guarded by the caller
+    out.extend(await backend.list_all_workspaces())
+
+
+def _print_restorable(entries: list[dict]) -> None:
+    for i, entry in enumerate(entries, start=1):
+        roles = ", ".join(entry["roles"]) or "(none tagged)"
+        print(f"[{i}] {entry['session']}  root={entry['workspace']}  roles={roles}")
+
+
+def _read_line(prompt: str) -> str | None:
+    """``input(prompt)``, or ``None`` on Ctrl-C/Ctrl-D - the one place that
+    reads a line from the user in ``--restore``'s picker, so every prompt
+    it shows shares the same cancellation handling instead of each call
+    site having to remember its own try/except (a single-entry prompt
+    missing this exact guard, while a multi-entry one right next to it had
+    it, is what this factoring exists to make impossible again).
+    """
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+
+def _prompt_selection(entries: list[dict]) -> dict | None:
+    """Ask which entry to attach to. Returns ``None`` if the user declined
+    (blank input, Ctrl-C/Ctrl-D) or input isn't interactive - callers treat
+    that as "just list them, attach nothing" rather than guessing.
+    """
+    if not sys.stdin.isatty():
+        return None
+    if len(entries) == 1:
+        reply = _read_line(f"Attach to {entries[0]['session']}? [Y/n] ")
+        if reply is None:
+            return None
+        return None if reply.strip().lower() in ("n", "no") else entries[0]
+    reply = _read_line(f"Attach to which? [1-{len(entries)}, blank to skip] ")
+    if reply is None:
+        return None
+    reply = reply.strip()
+    if not reply:
+        return None
+    try:
+        index = int(reply)
+    except ValueError:
+        print(f"Not a number: {reply!r}")
+        return None
+    if not (1 <= index <= len(entries)):
+        print(f"Out of range: {index}")
+        return None
+    return entries[index - 1]
+
+
+def _run_restore_listing() -> None:
+    """``claudespace --restore``: list every tmux-backed session found
+    (waiting briefly for an in-flight autorestore first, same as a normal
+    attach), then - interactively - attach to whichever one is picked.
+    """
+    from claudespace.backends.tmux import TmuxBackend
+
+    persist, persist_interval_minutes = load_tmux_persistence()
+    viewer = load_tmux_viewer()
+    backend = TmuxBackend(
+        viewer=viewer, persist=persist, persist_interval_minutes=persist_interval_minutes
+    )
+    entries: list[dict] = []
+    try:
+        backend.run(functools.partial(_fetch_restorable, out=entries))
+    except Exception:
+        logger.exception("Failed to list restorable tmux sessions")
+        sys.exit(1)
+
+    if not entries:
+        print("No claudespace tmux sessions found.")
+        return
+
+    _print_restorable(entries)
+    chosen = _prompt_selection(entries)
+    if chosen is None:
+        print()
+        print("Attach with: claudespace --tmux --root <root>")
+        print("         or: tmux -L claudespace attach -t <session>")
+        return
+
+    logger.info("Attaching to %s...", chosen["session"])
+    utils.launch_viewer(chosen["session"], viewer=viewer)
+
+
 async def _run_watchdog(
-    connection: "iterm2.Connection", *, root: str, interval: float, stall_after: float
+    backend: TerminalBackend, *, root: str, interval: float, stall_after: float
 ) -> None:
     # No per-window instance UUID is available from a bare `claudespace
     # watchdog` invocation (that's only ever minted at `build_workspace`
@@ -193,7 +324,7 @@ async def _run_watchdog(
     # older-pane handling already relies on. Ambiguous only when two
     # windows are open against the same resolved root simultaneously.
     await watchdog.run_watchdog(
-        connection,
+        backend,
         root=os.path.abspath(os.path.expanduser(root)),
         instance=None,
         interval_seconds=interval,
@@ -201,11 +332,92 @@ async def _run_watchdog(
     )
 
 
+def _resolve_backend(*, force_tmux: bool = False) -> TerminalBackend:
+    """Resolve the configured terminal backend once, at CLI entry (AD5) -
+    everything downstream (workspace build, watchdog) is threaded this same
+    instance rather than re-resolving config independently.
+
+    ``--tmux`` (``force_tmux``) overrides config/env for this invocation
+    only, the same way ``CLAUDESPACE_TERMINAL`` does - iTerm2 remains the
+    default and the config-file selection is still what a plain
+    ``claudespace`` (no flag) uses.
+    """
+    try:
+        return get_backend("tmux" if force_tmux else None)
+    except ValueError as exc:
+        logger.error(exc)
+        sys.exit(1)
+
+
+def _check_tmux_persistence() -> None:
+    """Informational-only doctor check for the tmux backend's vendored
+    resurrect/continuum plugins (Increment 2, Implementation Order step
+    11). Never affects doctor's overall exit code - tmux is an entirely
+    optional backend, unlike the iTerm2 checks above it.
+    """
+    from claudespace.backends import tmux_cli, tmux_persist
+
+    if not tmux_cli.is_tmux_available():
+        return
+    if tmux_persist.plugins_present():
+        logger.info(
+            "tmux backend: vendored resurrect/continuum plugins found at %s",
+            tmux_persist.PLUGINS_DIR,
+        )
+    else:
+        logger.warning(
+            "tmux backend: vendored resurrect/continuum plugins not found at "
+            "%s - run 'claudespace-sync-assets' to install them (session "
+            "persistence across a reboot won't work until then; the tmux "
+            "backend itself is otherwise unaffected).",
+            tmux_persist.PLUGINS_DIR,
+        )
+
+
+def _ensure_terminal_launched(backend: TerminalBackend) -> bool:
+    """Cold-launch iTerm2 if it isn't already running, and run claudespace's
+    own preflight checks against it (Python API enablement etc, see
+    ``environment.py``).
+
+    Returns whether we just launched it (``just_launched_terminal``, threaded
+    through to ``workspace.open_workspace`` so it knows whether the default
+    empty window it finds afterwards is stray chrome to clean up).
+
+    Only meaningful for the iTerm2 path: the tmux backend builds entirely
+    headlessly against a detached tmux server (AD3) and only spawns a
+    viewer terminal afterwards, in ``TmuxBackend.activate_window`` - there is
+    nothing to cold-launch before that, so this is a no-op for it.
+    """
+    from claudespace.backends.tmux import TmuxBackend
+
+    if isinstance(backend, TmuxBackend):
+        return False
+
+    was_running = utils.is_iterm_running()
+    environment.ensure_environment(iterm_was_running=was_running)
+    if not was_running:
+        logger.info("iTerm2 is not running - launching it")
+        utils.launch_iterm()
+    return not was_running
+
+
+def _apply_manual_override(args: argparse.Namespace) -> None:
+    """``--manual`` is the single "fully supervised" toggle: disables both
+    auto-handoff (already its own dest, set ``False`` by the flag itself)
+    and autonomous (``--think``) mode, which now defaults on. ``--manual``
+    wins over an explicit ``--think``, since it's the more conservative
+    choice - mutates ``args`` in place.
+    """
+    if not args.auto_handoff:
+        args.think = False
+
+
 def main() -> None:
     """Entrypoint installed as the ``claudespace`` console script."""
     parser = _build_parser()
     args = parser.parse_args()
     utils.setup_logging(args.verbose)
+    _apply_manual_override(args)
 
     environment.require_macos()
 
@@ -219,6 +431,7 @@ def main() -> None:
             assume_yes=args.yes,
             launch=args.launch,
         )
+        _check_tmux_persistence()
         if ok:
             logger.info("claudespace is ready. Run 'claudespace' in any project folder.")
         sys.exit(0 if ok else 1)
@@ -228,12 +441,16 @@ def main() -> None:
         return
 
     if args.command == "watchdog":
-        environment.ensure_environment(iterm_was_running=utils.is_iterm_running())
+        backend = _resolve_backend(force_tmux=args.tmux)
+        from claudespace.backends.iterm import ItermBackend
+
+        if isinstance(backend, ItermBackend):
+            environment.ensure_environment(iterm_was_running=utils.is_iterm_running())
         runner = functools.partial(
             _run_watchdog, root=args.root, interval=args.interval, stall_after=args.stall_after
         )
         try:
-            connect.run(runner)
+            backend.run(runner)
         except KeyboardInterrupt:
             return
         except Exception:
@@ -246,18 +463,18 @@ def main() -> None:
             print(template_name)
         return
 
+    if args.restore:
+        _run_restore_listing()
+        return
+
     try:
         get_template(args.template)
     except KeyError as exc:
         logger.error(exc)
         sys.exit(1)
 
-    iterm_was_running = utils.is_iterm_running()
-    environment.ensure_environment(iterm_was_running=iterm_was_running)
-
-    if not iterm_was_running:
-        logger.info("iTerm2 is not running - launching it")
-        utils.launch_iterm()
+    backend = _resolve_backend(force_tmux=args.tmux)
+    just_launched_terminal = _ensure_terminal_launched(backend)
 
     runner = functools.partial(
         _run,
@@ -268,10 +485,10 @@ def main() -> None:
         lazy=args.lazy,
         think=args.think,
         max_items=args.max_items,
-        just_launched_iterm=not iterm_was_running,
+        just_launched_terminal=just_launched_terminal,
     )
     try:
-        connect.run(runner)
+        backend.run(runner)
     except Exception:
         logger.exception("Failed to build workspace for '%s'", args.root)
         sys.exit(1)

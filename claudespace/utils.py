@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import time
 
@@ -53,3 +54,78 @@ def launch_iterm(*, timeout: float = 10.0) -> None:
         if is_iterm_running():
             return
         time.sleep(0.2)
+
+
+GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty"
+
+# Which terminal `launch_viewer` knows how to spawn attaching to a detached
+# tmux session (AD5's `[terminal.tmux] viewer`). Ghostty is the default and
+# the backend's whole reason for existing; each entry is a one-line lookup
+# so another viewer is a small, isolated addition (design's Open Questions).
+_VIEWER_BUNDLE_IDS: dict[str, str] = {
+    "ghostty": GHOSTTY_BUNDLE_ID,
+    "iterm2": "com.googlecode.iterm2",
+}
+
+
+def is_tmux_available() -> bool:
+    """Whether a ``tmux`` binary is on ``PATH``. Peer of ``is_iterm_running``
+    for the tmux backend's own preflight (see ``backends/tmux.py``'s
+    ``TmuxBackend.run``, which is the actual gate - this is exposed here too
+    per the design's Components list, for symmetry with the iTerm2 checks
+    cli.py already runs at entry)."""
+    return shutil.which("tmux") is not None
+
+
+def launch_viewer(session: str, *, viewer: str = "ghostty") -> None:
+    """Spawn ``viewer`` running ``tmux attach -t <session>`` - how the tmux
+    backend makes a detached session visible (AD3/AD5). Unlike
+    ``launch_iterm`` (which starts a bare app claudespace then connects an
+    API to), this both launches the terminal *and* points it at the right
+    tmux session in one step, since a tmux viewer has no separate
+    scripting API to drive afterwards - the command line is the whole
+    interface.
+
+    Best-effort on the wait: a viewer that fails to launch doesn't corrupt
+    anything (Error Handling) - the detached session is untouched and still
+    reachable via a manual ``tmux attach -t <session>``, so this only waits
+    long enough to make failure visible quickly, and doesn't retry forever.
+    """
+    bundle_id = _VIEWER_BUNDLE_IDS.get(viewer)
+    if bundle_id is None:
+        raise ValueError(
+            f"Unknown tmux viewer '{viewer}'. Known viewers: "
+            f"{', '.join(sorted(_VIEWER_BUNDLE_IDS))}"
+        )
+    # `-e` takes the command and its own arguments as separate argv words
+    # (like execve), not one shell-style string - passing
+    # "tmux attach -t <session>" as a single argument makes the terminal
+    # look for a literal binary named that whole string and fail with
+    # "No such file or directory".
+    #
+    # `-L <socket>` matters just as much: every claudespace tmux command
+    # runs on the dedicated `claudespace` socket, not the user's default
+    # one (AD8) - the session physically lives there. A bare `tmux attach`
+    # here (no `-L`) looks on the *default* socket, finds nothing, and
+    # fails with "no sessions" even though the real session is right there
+    # on the dedicated one - reproduced live: every viewer launch failed
+    # this way until this was fixed.
+    from claudespace.backends.tmux_cli import SOCKET_NAME
+
+    subprocess.run(
+        [
+            "open",
+            "-b",
+            bundle_id,
+            "-n",
+            "--args",
+            "-e",
+            "tmux",
+            "-L",
+            SOCKET_NAME,
+            "attach",
+            "-t",
+            session,
+        ],
+        check=True,
+    )

@@ -18,7 +18,7 @@ Colors are Nord-derived and chosen for role fit:
 - reviewer (rose):          critique - draws attention without alarm
 
 Panes are labelled by their title bar, not by anything drawn into the pane
-itself. `claude --name <role>` (see iterm.py) sets the terminal title, which
+itself. `claude --name <role>` (see backends/common.py) sets the terminal title, which
 iTerm2 shows as "<role> (claude)" in each pane's own title bar; this module
 tints that bar with the role's accent so it reads at a glance.
 
@@ -144,7 +144,7 @@ def banner_command(role: str) -> str:
     Uses a 24-bit truecolor background escape (``\\033[48;2;R;G;Bm``)
     supported by iTerm2, reset with ``\\033[0m``. Returns a ``printf``
     command suitable for splicing into the ``&&``-chained pane launch
-    command in ``iterm.py``.
+    command in ``backends/common.py``.
     """
     theme = ROLE_THEMES[role]
     r, g, b = theme.accent.red, theme.accent.green, theme.accent.blue
