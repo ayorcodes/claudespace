@@ -13,6 +13,7 @@ from claudespace import pipeline
 from claudespace.handoff import (
     HANDOFF_STATE_SUFFIX,
     NAG_STATE_SUFFIX,
+    _handle_new_topic,
     _maybe_nag_missing_marker,
 )
 
@@ -184,3 +185,66 @@ def test_nags_without_crashing_when_the_scoped_session_dir_does_not_exist_yet(tm
 
     assert fired is True
     assert os.path.isfile(done_path + NAG_STATE_SUFFIX)
+
+
+class _RunDocBackend:
+    """Duck-typed backend for ``_handle_new_topic``: tracks a mutable
+    ``run_doc`` and records set_run_doc calls. find_role_pane/send_new are
+    no-ops (only the clear path touches them, which these tests don't hit)."""
+
+    def __init__(self, *, doc: str | None, run_started: float | None):
+        self._doc = doc
+        self._run_started = run_started
+        self.sets: list[str] = []
+
+    async def get_run_doc(self, *, marker, instance=None):
+        return self._doc, self._run_started
+
+    async def set_run_doc(self, *, marker, instance=None, doc, started_at):
+        self._doc = doc
+        self._run_started = started_at
+        self.sets.append(doc)
+
+    async def find_role_pane(self, *, marker, role, instance=None):
+        return None
+
+    async def send_new(self, pane):
+        pass
+
+
+def test_new_topic_warning_records_doc_so_a_retrigger_resumes(tmp_path):
+    # A genuinely new topic landing on a workspace whose prior run is still
+    # in flight (different doc, started, no reviewer PASS) warns once and
+    # suppresses auto-submit - but records the new doc, so retriggering the
+    # SAME doc resumes silently instead of re-warning (which had forced the
+    # user to press Enter on every retry).
+    root = str(tmp_path)
+    backend = _RunDocBackend(doc="docs/old-feature.md", run_started=1000.0)
+
+    async def _run():
+        warning = await _handle_new_topic(
+            backend, root=root, instance="i1", doc_artifact="docs/new-topic.md"
+        )
+        assert warning is not None and "old-feature.md" in warning
+        assert backend._doc == "docs/new-topic.md"  # recorded despite only warning
+
+        again = await _handle_new_topic(
+            backend, root=root, instance="i1", doc_artifact="docs/new-topic.md"
+        )
+        assert again is None  # resume fast-path -> auto-submit, no second warning
+
+    asyncio.run(_run())
+
+
+def test_same_doc_never_warns_in_the_first_place(tmp_path):
+    # The pre-existing fast-path: an incoming doc equal to the current
+    # run_doc always resumes, never warns.
+    root = str(tmp_path)
+    backend = _RunDocBackend(doc="docs/topic.md", run_started=1000.0)
+
+    async def _run():
+        assert await _handle_new_topic(
+            backend, root=root, instance="i1", doc_artifact="docs/topic.md"
+        ) is None
+
+    asyncio.run(_run())
