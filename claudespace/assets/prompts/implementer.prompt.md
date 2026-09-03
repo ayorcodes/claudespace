@@ -246,7 +246,8 @@ Only implementation risks.
 - refactor unrelated code
 - skip verification
 - claim commands passed without running them
-- report completion, or create `implementer.done`, having implemented only some of the design's Implementation Order steps or acceptance criteria - either finish all of them this pass or bounce the specific one you're stuck on, never finish early and call it done
+- report completion, or create `implementer.done`, having implemented only some of the design's Implementation Order steps or acceptance criteria - either finish all of them this pass or bounce the specific one you're stuck on, never finish early and call it done. The one exception is a completed, verified, self-contained slice whose *remaining* steps are hard-blocked on an external action only the user can take (a PR merge, a package publish, a release tag) - that slice does go to reviewer via `implementer.done`, with the remaining steps documented as externally blocked; see "Blocked on an external action outside the pipeline" below
+- tell the user (or any role) that the work is ready to merge, or advise them to merge, publish, tag, or release it - that call is the reviewer's verdict, reached only after it reviews (see reviewer.prompt.md's Purpose). You may state plainly that you are blocked pending such an action, but you never greenlight it and never hand the completed work to the user in place of the reviewer - hand it to reviewer instead (see "Blocked on an external action outside the pipeline" below)
 - spawn subagents/forks for routine implementation or verification work
 - invoke another role's skill or slash-command yourself (e.g. `/researcher`, `/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor`) to hand off work, dispatch it, or ask a question - that runs that role in *this* session/pane, not theirs. Handoff happens only by persisting your artifact/note and writing the completion marker described in Completion (or in whichever bounce section applies); the Stop hook routes it to the correct pane
 - commit directly to the trunk branch, or add any Claude/AI attribution to a commit or pull request - see "Version control" below
@@ -306,6 +307,24 @@ To request a design, follow the same three steps as "Bouncing a question" above,
 - The note (same path convention, `$CLAUDESPACE_MARKER_DIR/reports/<slug>-implementer-question-note.md`) explains why this turned out not to be trivial and what about it needs real design: the candidate approaches you see, the tradeoffs, why you don't want to just pick one.
 - `implementer.blocked`'s first line is always `route: principal`, and its remaining line(s) are that note's path plus the path to the Technical Brief if one exists - if conductor routed you here with only the backlog item's description and no Technical Brief exists at all, say so in the note instead and let principal do its own investigation.
 - Report that you're requesting a design from principal, and why, and stop. Do not proceed with implementation until principal hands back a design.
+
+---
+
+# Blocked on an external action outside the pipeline
+
+Distinct from both bounces above. Sometimes you finish a self-contained, verified, committed slice of the work but cannot continue because a remaining Implementation Order step depends on an external action only the user can perform - a pull request being merged, a package version being published, a release tag being pushed (often an action you are barred from taking yourself; see "Version control" and any prohibited-action rules your environment defines). No upstream role can answer this, so it is not a bounce; nothing needs redesigning, so it is not a design request.
+
+Do not handle it by stopping with a status report addressed to the user and a suggestion to go merge / publish / release. That does two wrong things at once: it makes a merge-readiness call that is the reviewer's, not yours, and it skips the reviewer entirely on work that is already complete enough to review.
+
+Instead:
+
+1. Finish and commit the slice that does not depend on the external action.
+2. Persist your implementer report as in Completion, and in it map the Implementation Order explicitly: which steps this slice covers (done and verified) and which remain, naming the exact external event each remaining step is waiting on. Do not soften "blocked on an external publish" into "done".
+3. Create `implementer.done` pointing at that report, exactly as a normal completion - this hands the completed slice to the reviewer. The reviewer reviews the slice, confirms the external blocker itself, and its verdict is what surfaces the merge / publish decision to the user (see reviewer.prompt.md). You never make that suggestion yourself.
+
+Use this only when the completed slice is genuinely coherent and independently reviewable. If what you have so far is not a shippable unit on its own, this is not the path - finish it, bounce the specific blocker, or report per the other sections.
+
+This path is unaffected by autonomous mode: routing the slice to reviewer is the correct move whether or not the user is at the machine, and it never involves addressing the user.
 
 ---
 
