@@ -62,7 +62,10 @@ GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty"
 # tmux session (AD5's `[terminal.tmux] viewer`). Ghostty is the default and
 # the backend's whole reason for existing; each entry is a one-line lookup
 # so another viewer is a small, isolated addition (design's Open Questions).
-_VIEWER_BUNDLE_IDS: dict[str, str] = {
+# Public (not underscore-prefixed) so environment.py's usable-backend
+# detection can look up a configured viewer's bundle ID without reaching
+# into a private name.
+VIEWER_BUNDLE_IDS: dict[str, str] = {
     "ghostty": GHOSTTY_BUNDLE_ID,
     "iterm2": "com.googlecode.iterm2",
 }
@@ -91,11 +94,11 @@ def launch_viewer(session: str, *, viewer: str = "ghostty") -> None:
     reachable via a manual ``tmux attach -t <session>``, so this only waits
     long enough to make failure visible quickly, and doesn't retry forever.
     """
-    bundle_id = _VIEWER_BUNDLE_IDS.get(viewer)
+    bundle_id = VIEWER_BUNDLE_IDS.get(viewer)
     if bundle_id is None:
         raise ValueError(
             f"Unknown tmux viewer '{viewer}'. Known viewers: "
-            f"{', '.join(sorted(_VIEWER_BUNDLE_IDS))}"
+            f"{', '.join(sorted(VIEWER_BUNDLE_IDS))}"
         )
     # `-e` takes the command and its own arguments as separate argv words
     # (like execve), not one shell-style string - passing

@@ -21,6 +21,8 @@ import sys
 import time
 
 from claudespace import utils
+from claudespace.backends import tmux_cli
+from claudespace.config import load_tmux_viewer
 
 logger = logging.getLogger(__name__)
 
@@ -68,24 +70,34 @@ def _defaults_read(key: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def is_iterm_installed() -> bool:
-    """Whether iTerm.app is present anywhere Launch Services knows about.
+def _app_installed(bundle_id: str, app_paths: tuple[str, ...] = ()) -> bool:
+    """Whether an app is present anywhere Launch Services knows about.
 
-    The two hardcoded Applications paths cover the common cases; ``mdfind``
-    by bundle ID catches an install somewhere else (a per-user folder, an
+    Hardcoded ``app_paths`` cover the common cases cheaply; ``mdfind`` by
+    bundle ID catches an install somewhere else (a per-user folder, an
     MDM-managed path, a renamed copy) that would otherwise be reported as
     missing - prompting a second, redundant install of an app the user
     already has.
     """
-    if any(os.path.isdir(path) for path in ITERM_APP_PATHS):
+    if any(os.path.isdir(path) for path in app_paths):
         return True
     result = subprocess.run(
-        ["mdfind", f"kMDItemCFBundleIdentifier == {ITERM_BUNDLE_ID}"],
+        ["mdfind", f"kMDItemCFBundleIdentifier == {bundle_id}"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
     )
     return bool(result.stdout.strip())
+
+
+def is_iterm_installed() -> bool:
+    """Whether iTerm.app is present anywhere Launch Services knows about."""
+    return _app_installed(ITERM_BUNDLE_ID, ITERM_APP_PATHS)
+
+
+def is_ghostty_installed() -> bool:
+    """Whether Ghostty.app is present anywhere Launch Services knows about."""
+    return _app_installed(utils.GHOSTTY_BUNDLE_ID)
 
 
 def is_brew_available() -> bool:
@@ -255,6 +267,79 @@ def _ensure_api_enabled(*, iterm_was_running: bool, launch: bool) -> bool:
         )
         return False
     return True
+
+
+def _viewer_installed(viewer: str) -> bool:
+    """Whether the tmux backend's configured viewer app is present.
+
+    An unknown viewer name returns ``False`` (conservative): it already
+    makes ``utils.launch_viewer`` raise, so the tmux backend wouldn't
+    function with it regardless of detection.
+    """
+    bundle_id = utils.VIEWER_BUNDLE_IDS.get(viewer)
+    if bundle_id is None:
+        return False
+    if viewer == "iterm2":
+        return is_iterm_installed()
+    return _app_installed(bundle_id)
+
+
+def detect_usable_backends() -> list[str]:
+    """Which supported terminal setups are actually usable right now.
+
+    Backend-agnostic: this is doctor/install's shared source of truth for
+    "is *any* supported setup usable," trusting no config value as evidence
+    of presence - every verdict is backed by a filesystem/``mdfind``/``which``
+    probe.
+    """
+    usable = []
+    if is_iterm_installed():
+        usable.append("iterm2")
+    if tmux_cli.is_tmux_available():
+        viewer = load_tmux_viewer()
+        if _viewer_installed(viewer):
+            usable.append("tmux")
+    return usable
+
+
+def run_doctor_checks(
+    *, iterm_was_running: bool, assume_yes: bool = False, launch: bool = True
+) -> bool:
+    """Backend-agnostic doctor/install entry point: is any supported terminal
+    setup usable, only installing iTerm2 as a fallback if not.
+
+    Unlike ``check_environment`` (kept for the iTerm2-specific real-run and
+    watchdog paths, which must still install iTerm2 when it's the backend
+    the user explicitly chose), this never assumes iTerm2 is the target -
+    it reports what it found and only falls back to installing iTerm2 when
+    nothing usable exists.
+    """
+    require_macos()
+    ok = True
+
+    if not is_claude_installed():
+        logger.error(
+            "The 'claude' CLI was not found on PATH. Install Claude Code "
+            "(https://claude.com/claude-code) and re-run."
+        )
+        ok = False
+
+    usable = detect_usable_backends()
+    if not usable:
+        logger.warning(
+            "No supported terminal setup found (iTerm2, or tmux + its "
+            "viewer)."
+        )
+        if not install_iterm_via_brew(assume_yes=assume_yes):
+            return False
+    else:
+        logger.info("Found usable terminal setup(s): %s", ", ".join(usable))
+
+    if is_iterm_installed():
+        if not _ensure_api_enabled(iterm_was_running=iterm_was_running, launch=launch):
+            ok = False
+
+    return ok
 
 
 def check_environment(

@@ -4,6 +4,10 @@ way ``CLAUDESPACE_TERMINAL`` does (but without needing a config file)."""
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
 from claudespace import cli
 from claudespace.backends.iterm import ItermBackend
 from claudespace.backends.tmux import TmuxBackend
@@ -153,3 +157,43 @@ class TestPromptSelection:
 
         monkeypatch.setattr("builtins.input", _raise)
         assert cli._prompt_selection([ENTRY_A]) is None
+
+
+class TestDoctorSubcommand:
+    def _patch(self, monkeypatch, *, ok: bool):
+        monkeypatch.setattr(cli.environment, "require_macos", lambda: None)
+        monkeypatch.setattr(cli.utils, "is_iterm_running", lambda: False)
+        calls = []
+
+        def _fake_run_doctor_checks(*, iterm_was_running, assume_yes, launch):
+            calls.append((iterm_was_running, assume_yes, launch))
+            return ok
+
+        monkeypatch.setattr(cli.environment, "run_doctor_checks", _fake_run_doctor_checks)
+        persistence_calls = []
+        monkeypatch.setattr(
+            cli, "_check_tmux_persistence", lambda: persistence_calls.append(True)
+        )
+        return calls, persistence_calls
+
+    def test_doctor_calls_run_doctor_checks_not_check_environment(self, monkeypatch):
+        calls, _ = self._patch(monkeypatch, ok=True)
+        monkeypatch.setattr(sys, "argv", ["claudespace", "doctor"])
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 0
+        assert calls == [(False, False, True)]
+
+    def test_doctor_still_runs_tmux_persistence_check(self, monkeypatch):
+        _, persistence_calls = self._patch(monkeypatch, ok=True)
+        monkeypatch.setattr(sys, "argv", ["claudespace", "doctor"])
+        with pytest.raises(SystemExit):
+            cli.main()
+        assert persistence_calls == [True]
+
+    def test_doctor_exit_code_mirrors_failure(self, monkeypatch):
+        self._patch(monkeypatch, ok=False)
+        monkeypatch.setattr(sys, "argv", ["claudespace", "doctor"])
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 1

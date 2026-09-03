@@ -3,8 +3,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.sh | sh
 #
-# claudespace is macOS-only (it drives iTerm2's Python API, which has no
-# Windows/Linux build) - this script refuses to run anywhere else.
+# claudespace is macOS-only (its supported terminal setups - iTerm2's
+# Python API, or tmux + a viewer app - have no Windows/Linux build) - this
+# script refuses to run anywhere else.
 
 set -eu
 
@@ -26,7 +27,7 @@ die() {
 # Refuse early, before cloning anything: there is no point downloading a
 # repo onto a machine that can never run it.
 if [ "$(uname -s)" != "Darwin" ]; then
-    die "claudespace only works on macOS (it drives iTerm2, which has no Windows/Linux build)."
+    die "claudespace only works on macOS (its supported terminal setups have no Windows/Linux build)."
 fi
 
 # When run as `curl ... | sh`, $0 is the shell itself, not this file, so
@@ -147,11 +148,12 @@ echo "Registering bundled commands and prompts..."
 "$BIN_DIR/claudespace-sync-assets"
 
 # --- one-time environment setup ------------------------------------------
-# iTerm2, its Python API preference, and the claude CLI used to be checked
-# only on the first real `claudespace` run, which meant a new user was
-# bounced out of the tool two or three times before it did anything. Do it
-# here instead. --no-launch keeps the installer from opening iTerm2.
-echo "Checking your environment..."
+# A usable terminal setup (iTerm2 + its Python API, or tmux + a viewer),
+# and the claude CLI, used to be checked only on the first real
+# `claudespace` run, which meant a new user was bounced out of the tool two
+# or three times before it did anything. Do it here instead. --no-launch
+# keeps the installer from opening iTerm2.
+echo "Checking for a supported terminal setup..."
 "$BIN_DIR/claudespace" doctor --yes --no-launch || DOCTOR_FAILED=1
 
 # --- verify PATH ----------------------------------------------------------

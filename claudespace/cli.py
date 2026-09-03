@@ -426,7 +426,7 @@ def main() -> None:
         return
 
     if args.command == "doctor":
-        ok = environment.check_environment(
+        ok = environment.run_doctor_checks(
             iterm_was_running=utils.is_iterm_running(),
             assume_yes=args.yes,
             launch=args.launch,
