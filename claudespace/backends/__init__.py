@@ -38,6 +38,10 @@ def get_backend(name: str | None = None) -> TerminalBackend:
             persist=persist,
             persist_interval_minutes=persist_interval_minutes,
         )
+    if resolved == "cmux":
+        from claudespace.backends.cmux import CmuxBackend
+
+        return CmuxBackend()
     raise ValueError(
-        f"Unknown terminal backend '{resolved}'. Known backends: iterm2, tmux"
+        f"Unknown terminal backend '{resolved}'. Known backends: iterm2, tmux, cmux"
     )

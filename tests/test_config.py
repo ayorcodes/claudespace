@@ -155,6 +155,18 @@ class TestLoadTerminalBackend:
         with pytest.raises(ValueError, match="warp"):
             load_terminal_backend(toml_path, env={})
 
+    def test_cmux_is_a_known_backend(self, toml_path):
+        toml_path.write_text('[terminal]\nbackend = "cmux"\n')
+        assert load_terminal_backend(toml_path, env={}) == "cmux"
+
+    def test_cmux_env_override(self, tmp_path):
+        assert (
+            load_terminal_backend(
+                tmp_path / "nope.toml", env={"CLAUDESPACE_TERMINAL": "cmux"}
+            )
+            == "cmux"
+        )
+
     def test_unknown_env_value_is_a_named_error(self, toml_path):
         with pytest.raises(ValueError, match="warp"):
             load_terminal_backend(toml_path, env={"CLAUDESPACE_TERMINAL": "warp"})

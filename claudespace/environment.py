@@ -24,6 +24,15 @@ from claudespace import utils
 from claudespace.backends import tmux_cli
 from claudespace.config import load_tmux_viewer
 
+CMUX_SOCKET_CONTROL_MODE_HELP = (
+    "cmux's socket is reachable but refused the connection ('Access denied "
+    "- only processes started inside cmux can connect'). This is cmux's "
+    "automation.socketControlMode setting, defaulting to 'cmuxOnly' - an "
+    "external process (like claudespace) needs it widened. Fix: add "
+    '`"automation": {"socketControlMode": "automation"}` to '
+    "~/.config/cmux/cmux.json, then run 'cmux reload-config'."
+)
+
 logger = logging.getLogger(__name__)
 
 ITERM_APP_PATHS = (
@@ -98,6 +107,41 @@ def is_iterm_installed() -> bool:
 def is_ghostty_installed() -> bool:
     """Whether Ghostty.app is present anywhere Launch Services knows about."""
     return _app_installed(utils.GHOSTTY_BUNDLE_ID)
+
+
+def is_cmux_installed() -> bool:
+    """Whether cmux.app is present anywhere Launch Services knows about."""
+    return _app_installed(utils.CMUX_BUNDLE_ID)
+
+
+def is_cmux_reachable(*, timeout: float = 5.0) -> tuple[bool, str | None]:
+    """Whether cmux's automation socket actually answers - never inferred
+    from a socket-file stat (D4/spike A0: 0600/owner-checked is necessary
+    but not sufficient).
+
+    Runs ``cmux ping`` and expects ``PONG``. Returns ``(True, None)`` on
+    success; on failure, ``(False, message)`` where ``message`` names the
+    exact fix when the failure is the specific 'Access denied' response
+    caused by ``automation.socketControlMode`` being left at its default
+    ``cmuxOnly`` - the one real surprise the spike found - and a generic
+    message otherwise.
+    """
+    try:
+        result = subprocess.run(
+            ["cmux", "ping"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return False, f"Could not run 'cmux ping': {exc}"
+    if result.returncode == 0 and "PONG" in result.stdout:
+        return True, None
+    stderr = (result.stderr or "").strip() or (result.stdout or "").strip()
+    if "Access denied" in stderr:
+        return False, CMUX_SOCKET_CONTROL_MODE_HELP
+    return False, stderr or "'cmux ping' failed for an unknown reason"
 
 
 def is_brew_available() -> bool:
@@ -299,6 +343,8 @@ def detect_usable_backends() -> list[str]:
         viewer = load_tmux_viewer()
         if _viewer_installed(viewer):
             usable.append("tmux")
+    if is_cmux_installed() and is_cmux_reachable()[0]:
+        usable.append("cmux")
     return usable
 
 

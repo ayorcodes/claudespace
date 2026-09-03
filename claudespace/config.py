@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # defaults to iTerm2 (FR1/AC8), never a silent third option.
 CONFIG_PATH = Path.home() / ".config" / "claudespace" / "config.toml"
 DEFAULT_TERMINAL_BACKEND = "iterm2"
-KNOWN_TERMINAL_BACKENDS = frozenset({"iterm2", "tmux"})
+KNOWN_TERMINAL_BACKENDS = frozenset({"iterm2", "tmux", "cmux"})
 
 DEFAULT_TMUX_VIEWER = "ghostty"
 
