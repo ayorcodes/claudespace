@@ -1,6 +1,6 @@
 # Per-Session Marker Scoping — Implementation Design
 
-Status: accepted (ready to implement).
+Status: implemented.
 
 ## References
 
