@@ -280,7 +280,11 @@ async def _handle_new_topic(
 
     Returns ``None`` if this continues the workspace's current run (no
     action needed), or a warning string to prefix the handoff prompt with
-    if the old run was still in flight.
+    if the old run was still in flight. In the warning case it still records
+    ``doc_artifact`` as the current run, so the warning + suppressed
+    auto-submit fire once for a genuinely new topic and a retrigger of that
+    same doc then resumes normally (takes the ``current_doc == doc_artifact``
+    fast-path) instead of re-warning every time.
 
     ``force`` (set for conductor-driven runs) skips the in-flight check
     entirely: the conductor owns the pipeline and is moving to the next
@@ -334,6 +338,18 @@ async def _handle_new_topic(
         "New topic '%s' starts while run '%s' is still in flight - warning instead of clearing",
         doc_artifact,
         current_doc,
+    )
+    # Record the new doc as the workspace's run even though we're only
+    # warning (not clearing) this time. The warning + no-auto-submit is a
+    # one-shot: it exists to make a human look before displacing an
+    # in-flight run, not to re-fire on every retry. Without this, a
+    # retriggered handoff of the *same* doc keeps comparing against the
+    # stale prior doc, re-warns, and re-suppresses the auto-submit - so the
+    # user has to press Enter by hand on every retrigger. Recording it here
+    # means the next fire of this same doc takes the ``current_doc ==
+    # doc_artifact`` resume fast-path above (returns None, auto-submits).
+    await backend.set_run_doc(
+        marker=root, instance=instance, doc=doc_artifact, started_at=time.time()
     )
     return (
         f"NOTE: the previous run on {current_doc} was still in progress in "
