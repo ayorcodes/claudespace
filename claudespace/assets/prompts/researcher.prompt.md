@@ -476,7 +476,7 @@ When complete:
 
 1. Persist the Technical Brief according to the project's documentation standards. This is the one and only copy - do not also duplicate it into a fixed claudespace path.
 
-2. If running inside a claudespace workspace (the `CLAUDESPACE_ROOT` environment variable is set), create `$CLAUDESPACE_MARKER_DIR/researcher.done`. Convention for every claudespace path in this prompt: `mkdir -p` the `.claudespace` (or `.claudespace/reports`) directory first if it does not already exist. Write this marker last, only once the brief is fully written and persisted.
+2. If running inside a claudespace workspace (the `CLAUDESPACE_ROOT` environment variable is set), create `$CLAUDESPACE_MARKER_DIR/researcher.done`. Convention for every `$CLAUDESPACE_MARKER_DIR` path in this prompt: it is a shell variable resolving to a per-session subdirectory (`.claudespace/s/<instance>/`), never the flat `.claudespace/`. Do these writes through the shell so the variable expands (`mkdir -p "$CLAUDESPACE_MARKER_DIR/reports"`, then write the file under it); if you instead use a file-writing tool that will not expand `$CLAUDESPACE_MARKER_DIR`, first run `echo "$CLAUDESPACE_MARKER_DIR"` and use that exact absolute path. Never hand-type a `.claudespace/...` path - the flat directory is the wrong target and the handoff silently misfires. Write this marker last, only once the brief is fully written and persisted.
 
    - Normally, its sole content is the project-root-relative path to the Technical Brief you just persisted in step 1 (for example `docs/research/2026-07-18-multi-tenant-support.md`). This hands the brief off to the planner pane automatically.
    - To take either fast path decided above, prefix that same path with a route line, e.g.:
