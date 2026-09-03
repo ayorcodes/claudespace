@@ -80,3 +80,16 @@ for full detail.
   prompt crashed with a raw traceback. Fixed by factoring both through
   one `_read_line()` helper so the two paths structurally can't diverge
   on this again, rather than just patching the missing guard in place.
+- **Round 8: tmux session renamed to the current task's slug** on every
+  `set_run_doc` (`cs-<hash8>-<instance>` → `cs-<hash8>-<task-slug>`),
+  purely cosmetic — every lookup still matches `@cs_*` pane tags, never
+  the session name (verified directly, both by tracing the one live
+  pipeline path where a rename and a reveal happen in the same handoff,
+  and by the commit's own `test_pane_lookups_still_work_after_a_rename`).
+  Unlike `--tmux`/`--think`, this didn't need a design-doc amendment — no
+  NFR/Out-of-Scope conflict, squarely within AD3/AD4's existing
+  session-naming model. One narrow, non-blocking edge case noted in the
+  review (OPTIONAL): `--restore`'s interactive attach can target a
+  session renamed out from under it if a handoff fires during the user's
+  think-time at the prompt — degrades to a clear tmux error, not silent
+  wrong behavior, so left as a future polish item rather than fixed.
