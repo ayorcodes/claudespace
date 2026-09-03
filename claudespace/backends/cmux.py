@@ -164,6 +164,43 @@ def _write_state(instance: str, state: dict[str, Any]) -> None:
         json.dump(state, f)
 
 
+# Seed dimensions for a lazy workspace's virtual pane-geometry model. cmux's
+# surface.list carries no real geometry (spike A7), and there is no
+# balance/tile verb, so - unlike tmux/iTerm2, which measure panes and split
+# the largest by aspect ratio - cmux would otherwise always split the handoff
+# source vertically and degenerate into a row of ever-narrower columns. Only
+# the *ratio* matters (it drives the split-direction rule below); a moderately
+# wide seed makes the first split a left/right divider (a main column) and
+# then tips subsequent splits into rows, yielding a balanced grid regardless
+# of the real (possibly ultra-wide) window - which is what we actually want a
+# lazy layout to converge to.
+_SEED_DIMS = (160, 48)
+
+
+def _choose_split(dims: dict[str, list[int]]) -> tuple[str, bool]:
+    """From a virtual ``{surface_ref: [w, h]}`` model, pick which surface to
+    split next and the divider direction.
+
+    Splits the largest-area surface (tmux's largest-sibling intent, without
+    the real geometry we lack) and chooses the divider by the exact rule
+    ``TmuxBackend.reveal_role`` uses: ``(w // 2) >= h`` -> a vertical
+    (left/right) split, else horizontal (top/bottom). Ties break on the ref so
+    the choice is deterministic and testable.
+    """
+    target = min(dims, key=lambda ref: (-(dims[ref][0] * dims[ref][1]), ref))
+    w, h = dims[target]
+    return target, (w // 2) >= h
+
+
+def _apply_split(dims: dict[str, list[int]], target: str, new_ref: str, *, vertical: bool) -> None:
+    """Update the model after splitting ``target`` into ``target`` +
+    ``new_ref``: the divider halves one dimension for both children."""
+    w, h = dims[target]
+    child = [w // 2, h] if vertical else [w, h // 2]
+    dims[target] = list(child)
+    dims[new_ref] = list(child)
+
+
 class CmuxBackend(TerminalBackend):
     """``TerminalBackend`` implementation driving cmux's socket API."""
 
@@ -363,6 +400,9 @@ class CmuxBackend(TerminalBackend):
                     "template": template_name,
                     "run_doc": None,
                     "run_started": None,
+                    # Seed the virtual pane-geometry model reveal_role balances
+                    # against - the entry pane owns the whole workspace so far.
+                    "panes": {root_pane.surface_ref: list(_SEED_DIMS)},
                 },
             )
             return CmuxWindow(workspace_ref=workspace_ref, instance=instance)
@@ -582,12 +622,29 @@ class CmuxBackend(TerminalBackend):
         role: str,
         source: CmuxPane,
     ) -> CmuxPane | None:
-        # No largest-sibling selection here (unlike the other two backends):
-        # cmux's surface.list carries no pane geometry (confirmed against
-        # the spike's A7 field inventory), so there is nothing to compare -
-        # split directly off the handoff source.
         pane_cfg = next((p for p in template.panes if p.role == role), None) or CANONICAL_PANES[role]
-        new_pane = await self.split_pane(source, vertical=True)
+
+        # cmux's surface.list carries no pane geometry (spike A7) and there is
+        # no balance/tile verb, so a virtual model kept in workspace-state.json
+        # stands in for the measurements tmux/iTerm2 make: split the largest
+        # pane by aspect ratio instead of always splitting the handoff source
+        # vertically (which degenerates into a row of ever-narrower columns).
+        state = _read_state(instance)
+        dims: dict[str, list[int]] = state.get("panes") or {}
+        if not dims:
+            # First reveal, or an old/migrated session with no model yet: seed
+            # from whatever of ours already exist, all equal, so it self-heals.
+            async for _role, existing in self.each_pane(marker=marker, instance=instance):
+                dims[existing.surface_ref] = list(_SEED_DIMS)
+        dims.setdefault(source.surface_ref, list(_SEED_DIMS))
+
+        target_ref, vertical = _choose_split(dims)
+        target_pane = CmuxPane(surface_ref=target_ref, workspace_ref=source.workspace_ref)
+        new_pane = await self.split_pane(target_pane, vertical=vertical)
+        _apply_split(dims, target_ref, new_pane.surface_ref, vertical=vertical)
+        state["panes"] = dims
+        _write_state(instance, state)
+
         await self._launch_pane(
             new_pane,
             instance=instance,
