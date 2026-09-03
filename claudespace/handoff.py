@@ -100,6 +100,12 @@ def _already_nagged(done_path: str) -> bool:
 
 
 def _mark_nagged(done_path: str) -> None:
+    # Unlike _mark_handed_off (always called right after successfully
+    # reading a marker that just proved its directory exists), this fires
+    # on the *missing*-marker path - the role never wrote its .done/.blocked
+    # at all, so under per-session scoping (pipeline.session_marker_dir)
+    # nothing may have created its scoped s/<instance>/ subdirectory yet.
+    os.makedirs(os.path.dirname(done_path), exist_ok=True)
     open(done_path + NAG_STATE_SUFFIX, "w").close()
 
 

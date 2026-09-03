@@ -93,3 +93,22 @@ def test_no_existing_nagged_still_nags_without_checking_run_doc(tmp_path):
 
     assert fired is True
     assert os.path.isfile(done_path + NAG_STATE_SUFFIX)
+
+
+def test_nags_without_crashing_when_the_scoped_session_dir_does_not_exist_yet(tmp_path):
+    # The role never wrote its .done/.blocked at all - the exact case this
+    # nag exists to catch - so nothing may have created its scoped
+    # s/<instance>/ subdirectory yet (unlike the flat legacy layout, where
+    # the base .claudespace/ dir was always pre-created at workspace build
+    # time). Deliberately skip _prep's mkdir to reproduce that.
+    root = str(tmp_path)
+    done_path = pipeline.done_marker_path(root, "implementer", "i1")
+    assert not os.path.isdir(os.path.dirname(done_path))
+    backend = _FakeBackend(run_started=100.0)
+
+    fired = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+
+    assert fired is True
+    assert os.path.isfile(done_path + NAG_STATE_SUFFIX)
