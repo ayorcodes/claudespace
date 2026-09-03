@@ -17,7 +17,7 @@ import asyncio
 import pytest
 
 from claudespace.backends import cmux
-from claudespace.backends.cmux import CmuxBackend
+from claudespace.backends.cmux import CmuxBackend, _SEED_DIMS, _apply_split, _choose_split
 
 INSTANCE = "abcd1234-5678-90ab-cdef-1234567890ab"
 
@@ -95,3 +95,54 @@ def test_run_doc_round_trips_across_a_worktree_root_change():
         assert started == 42.0
 
     asyncio.run(_scenario())
+
+
+def _simulate_reveals(n_extra: int):
+    """Grow a lazy layout from one seeded pane by ``n_extra`` reveals, exactly
+    as reveal_role does, returning (final dims model, list of split directions).
+    """
+    dims: dict[str, list[int]] = {"surface:0": list(_SEED_DIMS)}
+    directions: list[bool] = []
+    for i in range(n_extra):
+        target, vertical = _choose_split(dims)
+        _apply_split(dims, target, f"surface:{i + 1}", vertical=vertical)
+        directions.append(vertical)
+    return dims, directions
+
+
+class TestLazyLayoutModel:
+    """The layout fix: cmux has no real geometry, so reveal balances against a
+    virtual model. Guards against the regression where every reveal split
+    vertically and panes degenerated into a row of ever-narrower columns.
+    """
+
+    def test_first_split_of_a_wide_seed_is_vertical(self):
+        # A main-left column, matching the eager layout's first divider.
+        _target, vertical = _choose_split({"surface:0": list(_SEED_DIMS)})
+        assert vertical is True
+
+    def test_apply_split_halves_the_right_dimension(self):
+        dims = {"a": [160, 48]}
+        _apply_split(dims, "a", "b", vertical=True)
+        assert dims == {"a": [80, 48], "b": [80, 48]}
+        dims = {"a": [80, 48]}
+        _apply_split(dims, "a", "b", vertical=False)
+        assert dims == {"a": [80, 24], "b": [80, 24]}
+
+    def test_choice_is_deterministic_largest_area_then_ref(self):
+        dims = {"a": [80, 48], "b": [160, 48], "c": [80, 48]}
+        assert _choose_split(dims)[0] == "b"  # largest area
+        assert _choose_split({"a": [80, 48], "b": [80, 48]})[0] == "a"  # tie -> ref order
+
+    def test_five_panes_form_a_grid_not_a_single_row(self):
+        dims, directions = _simulate_reveals(4)
+        assert len(dims) == 5
+        # The bug was 4 vertical splits in a row. A grid must mix directions.
+        assert False in directions, f"expected some horizontal splits, got {directions}"
+        assert True in directions
+        # No pane ends up a degenerate sliver: widths and heights stay within a
+        # 2x spread of each other (a balanced grid, not a fan of thin columns).
+        widths = [w for w, _h in dims.values()]
+        heights = [h for _w, h in dims.values()]
+        assert max(widths) / min(widths) <= 2
+        assert max(heights) / min(heights) <= 2
