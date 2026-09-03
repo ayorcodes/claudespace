@@ -1,6 +1,6 @@
 # CmuxBackend — Implementation Design
 
-Status: proposed (ready to implement).
+Status: implemented.
 
 ## References
 
