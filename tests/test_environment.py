@@ -54,6 +54,61 @@ class TestIsGhosttyInstalled:
         assert calls == [(environment.utils.GHOSTTY_BUNDLE_ID, ())]
 
 
+class TestIsCmuxInstalled:
+    def test_delegates_to_app_installed(self, monkeypatch):
+        calls = []
+
+        def _fake(bundle_id, app_paths=()):
+            calls.append((bundle_id, app_paths))
+            return True
+
+        monkeypatch.setattr(environment, "_app_installed", _fake)
+        assert environment.is_cmux_installed() is True
+        assert calls == [(environment.utils.CMUX_BUNDLE_ID, ())]
+
+
+class TestIsCmuxReachable:
+    def _fake_run(self, monkeypatch, *, returncode, stdout="", stderr=""):
+        import subprocess
+
+        def _run(cmd, **kwargs):
+            assert cmd == ["cmux", "ping"]
+            return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+
+        monkeypatch.setattr(environment.subprocess, "run", _run)
+
+    def test_pong_is_reachable(self, monkeypatch):
+        self._fake_run(monkeypatch, returncode=0, stdout="PONG")
+        assert environment.is_cmux_reachable() == (True, None)
+
+    def test_access_denied_names_the_socket_control_mode_fix(self, monkeypatch):
+        self._fake_run(
+            monkeypatch,
+            returncode=1,
+            stderr="Error: ERROR: Access denied - only processes started inside "
+            "cmux can connect",
+        )
+        reachable, message = environment.is_cmux_reachable()
+        assert reachable is False
+        assert "socketControlMode" in message
+        assert "automation" in message
+
+    def test_other_failure_is_a_generic_message(self, monkeypatch):
+        self._fake_run(monkeypatch, returncode=1, stderr="boom")
+        reachable, message = environment.is_cmux_reachable()
+        assert reachable is False
+        assert message == "boom"
+
+    def test_missing_binary_is_not_reachable(self, monkeypatch):
+        def _run(cmd, **kwargs):
+            raise FileNotFoundError("no such file")
+
+        monkeypatch.setattr(environment.subprocess, "run", _run)
+        reachable, message = environment.is_cmux_reachable()
+        assert reachable is False
+        assert "cmux ping" in message
+
+
 class TestIsItermInstalledUnchanged:
     def test_byte_for_byte_preserved_behaviour(self, monkeypatch, tmp_path):
         # Reimplemented on _app_installed (AD3) - same bundle ID and paths.
@@ -74,6 +129,8 @@ class TestDetectUsableBackends:
         tmux_available=False,
         viewer="ghostty",
         viewer_installed=False,
+        cmux_installed=False,
+        cmux_reachable=False,
     ):
         monkeypatch.setattr(environment, "is_iterm_installed", lambda: iterm)
         monkeypatch.setattr(
@@ -82,6 +139,10 @@ class TestDetectUsableBackends:
         monkeypatch.setattr(environment, "load_tmux_viewer", lambda: viewer)
         monkeypatch.setattr(
             environment, "_viewer_installed", lambda v: viewer_installed
+        )
+        monkeypatch.setattr(environment, "is_cmux_installed", lambda: cmux_installed)
+        monkeypatch.setattr(
+            environment, "is_cmux_reachable", lambda: (cmux_reachable, None)
         )
 
     def test_iterm_only_present(self, monkeypatch):
@@ -103,6 +164,25 @@ class TestDetectUsableBackends:
     def test_no_tmux_binary_skips_viewer_check(self, monkeypatch):
         self._patch(monkeypatch, tmux_available=False)
         assert environment.detect_usable_backends() == []
+
+    def test_cmux_installed_and_reachable(self, monkeypatch):
+        self._patch(monkeypatch, cmux_installed=True, cmux_reachable=True)
+        assert environment.detect_usable_backends() == ["cmux"]
+
+    def test_cmux_installed_but_not_reachable(self, monkeypatch):
+        self._patch(monkeypatch, cmux_installed=True, cmux_reachable=False)
+        assert environment.detect_usable_backends() == []
+
+    def test_all_three_present(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            iterm=True,
+            tmux_available=True,
+            viewer_installed=True,
+            cmux_installed=True,
+            cmux_reachable=True,
+        )
+        assert environment.detect_usable_backends() == ["iterm2", "tmux", "cmux"]
 
 
 class TestViewerInstalled:

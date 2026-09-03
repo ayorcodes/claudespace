@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from claudespace import backends
+from claudespace.backends.cmux import CmuxBackend
 from claudespace.backends.iterm import ItermBackend
 from claudespace.backends.tmux import TmuxBackend
 
@@ -22,6 +23,7 @@ def test_defaults_to_iterm_backend(monkeypatch, tmp_path):
 def test_explicit_name_bypasses_config(monkeypatch):
     assert isinstance(backends.get_backend("tmux"), TmuxBackend)
     assert isinstance(backends.get_backend("iterm2"), ItermBackend)
+    assert isinstance(backends.get_backend("cmux"), CmuxBackend)
 
 
 def test_unknown_explicit_name_raises():

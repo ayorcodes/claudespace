@@ -58,6 +58,10 @@ def launch_iterm(*, timeout: float = 10.0) -> None:
 
 GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty"
 
+# cmux.app's bundle id, for `environment._app_installed` (the cmux backend's
+# `is_cmux_installed`).
+CMUX_BUNDLE_ID = "com.cmuxterm.app"
+
 # Which terminal `launch_viewer` knows how to spawn attaching to a detached
 # tmux session (AD5's `[terminal.tmux] viewer`). Ghostty is the default and
 # the backend's whole reason for existing; each entry is a one-line lookup
