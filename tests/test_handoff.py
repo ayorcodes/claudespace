@@ -54,9 +54,11 @@ def _touch_nagged(done_path: str, *, mtime: float) -> str:
     return nag_path
 
 
-def test_nagged_newer_than_run_started_is_not_renagged(tmp_path):
+def test_fresh_nag_newer_than_run_started_is_not_renagged(tmp_path):
+    # A nag from this run, still within the cooldown window: neither stale-
+    # for-run nor stale-by-cooldown, so it is not re-fired.
     root, done_path = _prep(tmp_path)
-    _touch_nagged(done_path, mtime=200.0)
+    _touch_nagged(done_path, mtime=time.time())
     backend = _FakeBackend(run_started=100.0)
 
     fired = asyncio.run(
@@ -84,9 +86,11 @@ def test_nagged_older_than_run_started_is_cleared_and_renagged(tmp_path):
     assert len(backend.notifications) == 1
 
 
-def test_run_started_none_treats_existing_nagged_as_valid(tmp_path):
+def test_run_started_none_with_fresh_nag_is_not_renagged(tmp_path):
+    # No run doc recorded yet: the run-scoping reset can't apply, and a nag
+    # still inside the cooldown isn't re-fired either.
     root, done_path = _prep(tmp_path)
-    _touch_nagged(done_path, mtime=1.0)
+    _touch_nagged(done_path, mtime=time.time())
     backend = _FakeBackend(run_started=None)
 
     fired = asyncio.run(
@@ -94,6 +98,30 @@ def test_run_started_none_treats_existing_nagged_as_valid(tmp_path):
     )
 
     assert fired is False
+
+
+def test_nag_older_than_cooldown_is_renagged_within_the_same_run(tmp_path):
+    # The long-turn fix: a nag spent early in the run, older than the
+    # cooldown, is re-fired at a later Stop even though it's newer than
+    # run_started (so the run-scoping reset alone would NOT re-fire it). This
+    # is the terminal-completion nag the once-per-run design swallowed.
+    from claudespace.handoff import NAG_COOLDOWN_SECONDS
+
+    root, done_path = _prep(tmp_path)
+    now = time.time()
+    # Nag is newer than run start (not a leftover item) but older than the
+    # cooldown - isolating the cooldown reset from the run-scoping one.
+    _touch_nagged(done_path, mtime=now - (NAG_COOLDOWN_SECONDS + 60))
+    backend = _FakeBackend(run_started=now - (NAG_COOLDOWN_SECONDS + 120))
+
+    fired = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+
+    assert fired is True
+    assert os.path.isfile(done_path + NAG_STATE_SUFFIX)
+    assert os.path.getmtime(done_path + NAG_STATE_SUFFIX) >= now
+    assert len(backend.notifications) == 1
 
 
 def test_no_existing_nagged_still_nags_without_checking_run_doc(tmp_path):
@@ -336,3 +364,61 @@ def test_notify_terminal_state_renotifies_on_a_genuinely_new_marker(tmp_path):
         )
     )
     assert len(backend.notifications) == 2
+
+
+# --- has_unhanded_forward_work: shared silent-completion predicate ----------
+
+
+def test_unhanded_forward_work_true_when_role_owes_a_handoff_with_no_marker(tmp_path):
+    from claudespace.handoff import has_unhanded_forward_work
+
+    root, _ = _prep(tmp_path)
+    assert has_unhanded_forward_work(root, "implementer", "i1") is True
+
+
+def test_unhanded_forward_work_false_once_marker_handed_off(tmp_path):
+    from claudespace.handoff import has_unhanded_forward_work
+
+    root, done_path = _prep(tmp_path)
+    with open(done_path, "w") as f:
+        f.write("docs/x.md")
+    open(done_path + HANDOFF_STATE_SUFFIX, "w").close()
+
+    assert has_unhanded_forward_work(root, "implementer", "i1") is False
+
+
+def test_unhanded_forward_work_false_for_fresh_unhanded_marker(tmp_path):
+    # A fresh marker means the handoff is imminent (the Stop hook will act on
+    # it) - not a silent completion.
+    from claudespace.handoff import has_unhanded_forward_work
+
+    root, done_path = _prep(tmp_path)
+    with open(done_path, "w") as f:
+        f.write("docs/x.md")
+
+    assert has_unhanded_forward_work(root, "implementer", "i1") is False
+
+
+def test_unhanded_forward_work_false_for_terminal_reviewer(tmp_path):
+    from claudespace.handoff import has_unhanded_forward_work
+
+    root, _ = _prep(tmp_path, role="reviewer")
+    assert has_unhanded_forward_work(root, "reviewer", "i1") is False
+
+
+def test_unhanded_forward_work_true_for_conductor_driven_reviewer(tmp_path):
+    from claudespace.handoff import has_unhanded_forward_work
+
+    root, _ = _prep(tmp_path, role="reviewer")
+    conductor_run = pipeline.conductor_run_marker_path(root, "i1")
+    os.makedirs(os.path.dirname(conductor_run), exist_ok=True)
+    open(conductor_run, "w").close()
+
+    assert has_unhanded_forward_work(root, "reviewer", "i1") is True
+
+
+def test_unhanded_forward_work_false_for_unknown_role(tmp_path):
+    from claudespace.handoff import has_unhanded_forward_work
+
+    root = str(tmp_path)
+    assert has_unhanded_forward_work(root, "not-a-role", "i1") is False

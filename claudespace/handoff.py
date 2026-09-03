@@ -64,11 +64,23 @@ logger = logging.getLogger(__name__)
 # re-trigger the handoff.
 HANDOFF_STATE_SUFFIX = ".handed-off"
 
-# Marks that this role has already been reminded once about a missing
-# marker, so a role that's genuinely done with nothing to hand off (or
-# stuck waiting on the user for something outside the pipeline) doesn't get
-# nagged on every subsequent Stop.
+# Marks that this role has already been reminded about a missing marker, so
+# a role that's genuinely done with nothing to hand off (or stuck waiting on
+# the user for something outside the pipeline) doesn't get nagged on every
+# subsequent Stop.
 NAG_STATE_SUFFIX = ".nagged"
+
+# How long a ``.nagged`` sentinel silences re-nagging for. The nag is not
+# once-*ever*: a role that ends one turn with no marker (an early pause, a
+# permission prompt), then works for many minutes and ends its *real*
+# completion turn still with no marker, must be nagged again at that terminal
+# stop - otherwise the pipeline goes silent exactly when it matters (the
+# motivating "implementer finished after a long turn, no handoff, no nag"
+# bug). Keying the re-nag on elapsed wall-clock re-fires at that later stop
+# while still swallowing the tight block->reprompt->immediate-stop loop (which
+# turns over in seconds, far inside this window), so a role that's genuinely
+# parked waiting on the user isn't spammed. See ``_maybe_nag_missing_marker``.
+NAG_COOLDOWN_SECONDS = 240.0
 
 # Marks that a fresh .done/.blocked has already fired its terminal-state
 # notification (D6/FR6), mtime-compared to the marker exactly like
@@ -251,6 +263,48 @@ def _print_handoff_error_block(role: str, error: BaseException) -> None:
     )
 
 
+def has_unhanded_forward_work(
+    root: str, role: str, instance: str | None
+) -> bool:
+    """Whether ``role`` finished a turn with a forward handoff still owed but
+    no marker to trigger it - i.e. a *silent completion*: the role has
+    somewhere to hand off to, yet left neither a fresh ``.done``/``.blocked``
+    marker (one the Stop hook would act on) nor an already-handed one (proof
+    the handoff already went out).
+
+    This is the shared, backend-free predicate behind both the Stop-hook's
+    post-error fallback (``_maybe_nag_after_handoff_error``) and the
+    watchdog's idle-completion backstop (``watchdog._check_once``) - the two
+    places that must recognise "done, idle, nothing handed off" without any
+    backend call. The forward-stage test mirrors
+    ``_maybe_nag_missing_marker`` exactly (``stage.next_role``, plus the
+    conductor-driven-reviewer exception), *not* ``_send_handoff``'s broader
+    ``next_role or alt_next_roles``: a reviewer that finished a plain
+    (non-conductor) run and is parked at the prompt with no marker is
+    correctly *done* - PASS is terminal - and must not be flagged as unhanded
+    work.
+    """
+    stage = PIPELINE.get(role)
+    if stage is None:
+        return False
+    conductor_driven_reviewer = role == "reviewer" and os.path.isfile(
+        conductor_run_marker_path(root, instance)
+    )
+    if stage.next_role is None and not conductor_driven_reviewer:
+        return False
+    done_path = done_marker_path(root, role, instance)
+    blocked_path = blocked_marker_path(root, role, instance)
+    if _read_fresh_marker(done_path) or (
+        stage.bounce_to and _read_fresh_marker(blocked_path)
+    ):
+        return False
+    if _marker_present_and_handed(done_path) or (
+        stage.bounce_to and _marker_present_and_handed(blocked_path)
+    ):
+        return False
+    return True
+
+
 def _maybe_nag_after_handoff_error(
     root: str | None, role: str, instance: str | None
 ) -> bool:
@@ -262,26 +316,17 @@ def _maybe_nag_after_handoff_error(
     covering for just did.
 
     Returns ``True`` (and prints a Stop-block) whenever ``role`` has a
-    forward pipeline stage and left no fresh ``.done``/``.blocked`` marker
-    at all - the same condition ``_maybe_nag_missing_marker`` checks, minus
-    the auto-handoff toggle (unreachable here without a backend call) and
-    minus the "already nagged" dedup (best-effort only; a repeated nag on
-    back-to-back hook failures is an acceptable cost next to silently
-    saying nothing). ``False`` if ``root`` is missing, the role is unknown,
-    or a marker already exists - nothing useful to report.
+    forward pipeline stage and left no marker to hand off with
+    (``has_unhanded_forward_work``), minus the auto-handoff toggle
+    (unreachable here without a backend call) and minus the "already nagged"
+    dedup (best-effort only; a repeated nag on back-to-back hook failures is
+    an acceptable cost next to silently saying nothing). ``False`` if
+    ``root`` is missing, the role is unknown, or a marker already exists -
+    nothing useful to report.
     """
     if root is None:
         return False
-    stage = PIPELINE.get(role)
-    if stage is None or stage.next_role is None:
-        return False
-    done_path = done_marker_path(root, role, instance)
-    blocked_path = blocked_marker_path(root, role, instance)
-    if _read_fresh_marker(done_path) or (
-        stage.bounce_to and _read_fresh_marker(blocked_path)
-    ):
-        return False
-    return True
+    return has_unhanded_forward_work(root, role, instance)
 
 
 async def _old_run_finished(
@@ -656,20 +701,28 @@ async def _maybe_nag_missing_marker(
     So reviewer is nag-eligible whenever a conductor-run is active, even
     though its ``Stage.next_role`` is ``None``.
 
-    Fires at most once per missing-marker streak; ``_send_handoff`` clears
-    the nag flag as soon as a real marker shows up, so a role that's
-    genuinely stuck (e.g. waiting on the user) isn't nagged forever.
+    Fires again on a later Stop only once the standing ``.nagged`` is stale;
+    ``_send_handoff`` also clears the flag the moment a real marker shows up,
+    so a role that's genuinely stuck (e.g. waiting on the user) isn't nagged
+    on every idle turn. Two things make a ``.nagged`` stale:
 
-    ``.nagged`` is additionally scoped to the current *run* by mtime, not
-    just presence: consecutive backlog items in one conductor run share a
-    single instance and therefore a single scoped marker dir, so a leftover
-    ``.nagged`` from an earlier item is otherwise indistinguishable from a
-    fresh one for the item now in flight - the motivating stale-nag bug.
-    A ``.nagged`` older than ``run_started`` is a leftover: cleared here so
-    the nag fires again for this item, mirroring ``_old_run_finished``'s own
-    mtime comparison. ``run_started is None`` (no run doc recorded yet) is
-    treated as "still valid" - same as ``_old_run_finished`` - to avoid a
-    spurious nag before a run is even recorded.
+    * ``run_started`` scoping (by mtime, not mere presence): consecutive
+      backlog items in one conductor run share a single instance and
+      therefore a single scoped marker dir, so a leftover ``.nagged`` from an
+      earlier item is otherwise indistinguishable from a fresh one for the
+      item now in flight - the original stale-nag bug. A ``.nagged`` older
+      than ``run_started`` is a leftover, cleared here so the nag fires again
+      for this item, mirroring ``_old_run_finished``'s own mtime comparison.
+      ``run_started is None`` (no run doc recorded yet) is treated as "still
+      valid" for this check - same as ``_old_run_finished`` - to avoid a
+      spurious nag before a run is even recorded.
+    * the ``NAG_COOLDOWN_SECONDS`` cooldown: a ``.nagged`` older than the
+      cooldown is re-fired even *within* one run, so a role that ends an
+      early turn with no marker, then works for many minutes and ends its
+      real completion turn still with no marker, is nagged again at that
+      terminal stop instead of silently stalling the pipeline - the
+      long-turn silent-completion bug. The cooldown is long enough that the
+      block->reprompt->immediate-stop loop (seconds) never re-nags.
     """
     stage = PIPELINE.get(role)
     if stage is None:
@@ -700,7 +753,21 @@ async def _maybe_nag_missing_marker(
     already_nagged = _already_nagged(done_path)
     if already_nagged:
         _, run_started = await backend.get_run_doc(marker=root, instance=instance)
-        if run_started is None or os.path.getmtime(done_path + NAG_STATE_SUFFIX) >= run_started:
+        nag_mtime = os.path.getmtime(done_path + NAG_STATE_SUFFIX)
+        # Two independent reasons a standing ``.nagged`` is stale and the nag
+        # should fire again:
+        #   * cross-item: it predates the current run (an earlier conductor
+        #     backlog item left it - the original mtime-scoping bug), or
+        #   * within-run: it's older than the cooldown, meaning the role has
+        #     since done a long stretch of work and ended another turn still
+        #     with no marker (the long-turn silent-completion bug). Each Stop
+        #     is a real turn boundary; a terminal stop minutes after the last
+        #     nag is exactly the one that must re-nag, while a stop seconds
+        #     after it (the reprompt loop) stays inside the cooldown and does
+        #     not.
+        stale_for_run = run_started is not None and nag_mtime < run_started
+        stale_by_cooldown = time.time() - nag_mtime >= NAG_COOLDOWN_SECONDS
+        if not (stale_for_run or stale_by_cooldown):
             return False
         _clear_nag(done_path)
         already_nagged = False

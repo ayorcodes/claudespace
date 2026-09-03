@@ -202,3 +202,44 @@ def stall_decision(
     if now - previous["seen_at"] < stall_after_seconds:
         return current, False
     return current, True
+
+
+def idle_completion_decision(
+    previous: dict[str, Any] | None,
+    *,
+    text: str,
+    ready: bool,
+    now: float,
+    idle_after_seconds: float,
+) -> tuple[dict[str, Any], bool]:
+    """Pure watchdog decision for a *silent completion*: a pane that has sat
+    idle at claude's ready prompt, its screen unchanged, for
+    ``idle_after_seconds``.
+
+    This is the complement of ``stall_decision`` - which deliberately treats
+    an idle-at-prompt pane as healthy (a human supervising a run wants no
+    stall alert while a role sits waiting) - and is what lets the watchdog
+    catch the failure ``stall_decision`` can't see: a role that *finished* a
+    turn, produced no handoff marker, and is now parked at the prompt with
+    the pipeline silently stalled behind it. Whether that idle pane is
+    actually a problem (forward pipeline stage exists, no marker handed off)
+    is a filesystem/pipeline question the watchdog answers separately; this
+    function only reports the raw "idle and unchanged long enough" signal.
+
+    Unlike ``stall_decision``'s state (which restamps ``seen_at`` every poll
+    and so measures only the gap between the last two polls), this carries
+    the timestamp at which the current idle screen was *first* observed
+    (``since``) forward across polls, so "idle for ``idle_after_seconds``"
+    measures from first sighting regardless of the poll interval. A screen
+    that changes, or a pane that isn't at the ready prompt, resets the clock.
+    """
+    if not ready:
+        return {"text": text, "ready": ready, "since": now}, False
+    unchanged = (
+        previous is not None
+        and previous.get("ready")
+        and previous.get("text") == text
+    )
+    since = previous["since"] if unchanged else now
+    current = {"text": text, "ready": ready, "since": since}
+    return current, (now - since >= idle_after_seconds)
