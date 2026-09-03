@@ -378,6 +378,56 @@ class TestPromptDeliveryAndStall:
 
         asyncio.run(_scenario())
 
+    def test_send_role_prompt_pastes_a_large_prompt_instead_of_streaming_keys(
+        self, tmp_path, monkeypatch
+    ):
+        # A conductor handoff can carry a multi-KB inline dispatch. It must
+        # go out as one atomic paste - send-keys -l would deliver only the
+        # trailing ~0.5 KB of it, so the pane would start mid-word.
+        backend = TmuxBackend(persist=False)
+        marker = _marker(tmp_path)
+        big_prompt = "read " + "detail " * 500 + "and continue"
+
+        pasted: list[tuple[str, str]] = []
+        streamed: list[tuple[str, str]] = []
+        real_paste = tmux_cli.send_text_paste
+        real_keys = tmux_cli.send_keys_literal
+
+        async def _spy_paste(target, text):
+            pasted.append((target, text))
+            await real_paste(target, text)
+
+        async def _spy_keys(target, text):
+            streamed.append((target, text))
+            await real_keys(target, text)
+
+        monkeypatch.setattr(tmux_cli, "send_text_paste", _spy_paste)
+        monkeypatch.setattr(tmux_cli, "send_keys_literal", _spy_keys)
+
+        async def _scenario():
+            window = await backend.build_workspace(
+                marker=marker,
+                root=marker,
+                template_name="native",
+                template=_native_template(FAKE_CLAUDE),
+            )
+            pane = await backend.find_role_pane(marker=marker, role="researcher")
+            assert pane is not None
+
+            await backend.send_role_prompt(
+                "researcher", pane, text=big_prompt, submit=True
+            )
+            # The prompt was pasted in full - not truncated, not streamed as
+            # keystrokes - and it submitted (fake claude clears on newline).
+            assert (pane.pane_id, big_prompt) in pasted
+            assert not any(text == big_prompt for _, text in streamed)
+            captured = await tmux_cli.capture_pane(pane.pane_id)
+            assert big_prompt not in captured
+            assert "❯" in captured
+            await tmux_cli.kill_session(window.session)
+
+        asyncio.run(_scenario())
+
     def test_check_pane_stall_flags_a_dead_pane(self, tmp_path):
         backend = TmuxBackend(persist=False)
         marker = _marker(tmp_path)

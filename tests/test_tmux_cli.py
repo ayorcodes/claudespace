@@ -75,6 +75,31 @@ class TestArgvShapes:
             "send-keys", "-t", "%1", "-l", "--", "-not-a-flag"
         )
 
+    def test_send_text_paste_routes_through_a_buffer_with_the_full_text(self, recorder):
+        # The regression this guards: a handoff prompt must reach the pane
+        # as one atomic paste, not a send-keys keystroke burst (which drops
+        # the leading portion of a multi-KB prompt). The whole text goes
+        # into a set-buffer verbatim, then paste-buffer -p (bracketed paste)
+        # injects it and -d frees the buffer.
+        text = "-read " + "x" * 4000 + " and continue"
+        asyncio.run(tmux_cli.send_text_paste("%3", text))
+        assert recorder[0] == self.SOCKET_PREFIX + (
+            "set-buffer", "-b", "cs__3", "--", text
+        )
+        assert recorder[1] == self.SOCKET_PREFIX + (
+            "paste-buffer", "-d", "-p", "-b", "cs__3", "-t", "%3"
+        )
+        # Never falls back to a keystroke send for any part of the prompt.
+        assert not any("send-keys" in call for call in recorder)
+
+    def test_send_text_paste_buffer_name_is_derived_per_target(self, recorder):
+        # Concurrent handoffs to different panes must not clobber each
+        # other's buffer, so the name is a function of the target pane id.
+        asyncio.run(tmux_cli.send_text_paste("%12", "hi"))
+        assert recorder[0][: len(self.SOCKET_PREFIX) + 3] == self.SOCKET_PREFIX + (
+            "set-buffer", "-b", "cs__12"
+        )
+
     def test_split_window_horizontal_flag_for_vertical_true(self, recorder):
         asyncio.run(tmux_cli.split_window("%1", vertical=True, session="s"))
         assert recorder[0][: len(self.SOCKET_PREFIX) + 1] == self.SOCKET_PREFIX + ("split-window",)
@@ -189,6 +214,24 @@ class TestHeadlessRoundTrip:
             await asyncio.sleep(0.3)
             captured = await tmux_cli.capture_pane(pane)
             assert "hello-claudespace" in captured
+            await tmux_cli.kill_session(session_name)
+
+        asyncio.run(_scenario())
+
+    def test_paste_buffer_carries_a_large_prompt_without_truncation(self, session_name):
+        # send-keys -l drops the leading ~2 KB of a ~2.5 KB prompt (only the
+        # trailing ~0.5 KB survives the raw-mode input burst); the paste
+        # buffer that send_text_paste uses instead must round-trip every
+        # byte, front included, at that size class. show-buffer reads the
+        # buffer back so this asserts the boundary itself is lossless,
+        # independent of any live TUI.
+        async def _scenario():
+            await tmux_cli.new_session(session_name)
+            big = "HEAD-" + "x" * 3000 + "-TAIL"
+            await tmux_cli.run("set-buffer", "-b", "cs_big", "--", big)
+            back = await tmux_cli.run("show-buffer", "-b", "cs_big")
+            assert back == big
+            assert back.startswith("HEAD-") and back.endswith("-TAIL")
             await tmux_cli.kill_session(session_name)
 
         asyncio.run(_scenario())
