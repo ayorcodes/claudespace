@@ -26,3 +26,14 @@ spike) and
   (`README.md`) still only mentions `tmux`/`iterm2`, not `cmux` — never
   named in the design's Components/Affected Surfaces, so it didn't block,
   but worth a small doc pass later.
+- **Round 2 (post-PASS user feedback):** `--tmux` is a first-class
+  per-invocation CLI override flag (both the main command and `watchdog`)
+  that neither the design nor the ADR ever scoped an equivalent for on
+  `cmux` — user caught the asymmetry directly ("we have `--tmux` why not
+  `--cmux`?"). Added `--cmux` mirroring `--tmux` exactly, rejecting both
+  flags set together as a usage error rather than silently picking one
+  (commit `f2ba9fc`). Passed re-review with no new findings. Worth
+  remembering generally: a same-invocation CLI override is part of the
+  *user-facing contract* a new backend inherits by precedent, even when a
+  design doc scopes only config-file/env selection — future backends
+  should get one from the start.
