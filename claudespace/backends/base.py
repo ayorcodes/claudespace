@@ -13,6 +13,8 @@ module inspects one beyond passing it back into another backend method.
 
 from __future__ import annotations
 
+import logging
+import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
@@ -21,6 +23,8 @@ from claudespace.backends.common import DEFAULT_MAX_ITEMS
 
 if TYPE_CHECKING:
     from claudespace.config import Template
+
+logger = logging.getLogger(__name__)
 
 
 class Pane(Protocol):
@@ -194,6 +198,31 @@ class TerminalBackend(ABC):
     ) -> Pane | None:
         """Split off room for ``role`` near ``source`` and launch it.
         Returns the newly launched pane."""
+
+    async def notify(
+        self,
+        *,
+        title: str,
+        message: str,
+        marker: str | None = None,
+        instance: str | None = None,
+    ) -> None:
+        """Pop a user-visible notification for a claudespace event (D5/D6).
+
+        Concrete default: the ``osascript`` notification every backend used
+        via ``watchdog._notify`` before this method existed - so tmux/iTerm2
+        delivery is byte-for-byte unchanged. ``marker``/``instance`` are
+        ignored here; a backend whose delivery mechanism can target a
+        specific session (``CmuxBackend``) overrides this and uses them.
+        Best-effort: a delivery failure is logged, never raised - a
+        notification is cosmetic and must never fail a Stop hook or the
+        watchdog loop.
+        """
+        script = f"display notification {message!r} with title {title!r}"
+        try:
+            subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
+        except Exception:
+            logger.warning("Failed to send notification (non-fatal)", exc_info=True)
 
     @abstractmethod
     async def check_pane_stall(

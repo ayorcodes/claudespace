@@ -30,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import subprocess
 import time
 from typing import Any
 
@@ -41,19 +40,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_INTERVAL_SECONDS = 300
 DEFAULT_STALL_AFTER_SECONDS = 600
-
-
-def _notify(title: str, message: str) -> None:
-    """Pop a macOS notification via ``osascript`` - no extra dependency
-    beyond what ``environment.require_macos`` already guarantees is present.
-    Best-effort: a notification failure (e.g. notifications disabled for
-    the terminal app) is logged, not fatal to the watchdog loop.
-    """
-    script = f'display notification {message!r} with title {title!r}'
-    try:
-        subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
-    except Exception:
-        logger.warning("Failed to send stall notification (non-fatal)", exc_info=True)
 
 
 def _stall_marker_path(root: str, role: str, instance: str | None) -> str:
@@ -100,6 +86,13 @@ async def _check_once(
             _clear_stall_marker(root, role, instance)
             continue
 
+        # D6: notify only on the poll that transitions a pane into stalled,
+        # not on every poll it remains stalled - the "notifications persist"
+        # symptom the design fixes. The marker's own presence *before* this
+        # write is the onset check; still re-written every poll so its mtime
+        # reflects the most recent detection.
+        already_stalled = os.path.isfile(_stall_marker_path(root, role, instance))
+
         logger.warning(
             "Pane '%s' in workspace '%s' looks stalled or crashed - see "
             "%s for details",
@@ -108,9 +101,14 @@ async def _check_once(
             _stall_marker_path(root, role, instance),
         )
         _write_stall_marker(root, role, instance)
-        _notify(
-            "claudespace: possible stall",
-            f"'{role}' pane in {root} looks stalled or has crashed.",
+
+        if already_stalled:
+            continue
+        await backend.notify(
+            title="claudespace: possible stall",
+            message=f"'{role}' pane in {root} looks stalled or has crashed.",
+            marker=root,
+            instance=instance,
         )
 
 
