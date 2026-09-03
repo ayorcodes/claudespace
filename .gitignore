@@ -10,3 +10,4 @@ build/
 # Screenshots dropped in the repo root while debugging
 Screenshot*.png
 .claudespace
+CLAUDE.md
