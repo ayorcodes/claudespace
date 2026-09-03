@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from claudespace import pipeline
 from claudespace.config import READ_ONLY_ROLES
 from claudespace.guard import decide, is_allowed_path
 
@@ -84,3 +85,19 @@ class TestDecide:
         reason = decide(_write("/repo/src/app.ts"), "researcher")
         assert "researcher" in reason
         assert "/repo/src/app.ts" in reason
+
+    @pytest.mark.parametrize("role", sorted(READ_ONLY_ROLES))
+    def test_denial_is_imperative_and_names_the_marker(self, role):
+        marker = pipeline.done_marker_path("/repo", role, "i1")
+        reason = decide(
+            _write("/repo/src/app.ts"), role, root="/repo", instance="i1"
+        )
+        assert "Do NOT stop" in reason
+        assert marker in reason
+        assert "route: implementer" in reason
+
+    def test_missing_root_falls_back_without_a_concrete_path_or_crash(self):
+        reason = decide(_write("/repo/src/app.ts"), "researcher", root=None)
+        assert reason is not None
+        assert "Do NOT stop" in reason
+        assert "route: implementer" in reason
