@@ -108,8 +108,8 @@ A workspace's `docs/` directory can hold several `backlog-<slug>.md` files at on
 **Resolving which file, by invocation shape:**
 
 - **A goal was given as free text**: derive its slug. If `docs/backlog-<slug>.md` doesn't exist, this is a new goal - go to Workflow step 2 (Scan and decompose) and persist to that path. If it exists, the same goal is being resumed or re-invoked - continue that file rather than starting over; do not regenerate it or discard its status. Unsure whether the new goal text is the same run? Prefer treating it as new: a duplicate backlog costs little, silently overwriting unrelated in-flight status costs a lot. Ask the user only if genuinely ambiguous (the goal text is a near-paraphrase of an existing backlog's title).
-- **No goal given, `.claudespace/conductor-run` exists**: this is a pipeline handoff (e.g. reviewer's PASS routing back to you), not a fresh user request. `conductor-run`'s content is the project-root-relative path to the backlog file this run dispatches from - read that path, not a fixed filename.
-- **No goal given, no `.claudespace/conductor-run`**: the user is resuming after the initial checkpoint (Completion's "First invocation" step) without repeating the goal. Look for `docs/backlog-*.md` files with no `conductor-run` history - the most recently modified is normally the one just reviewed at checkpoint. If more than one plausibly qualifies, ask the user which.
+- **No goal given, `$CLAUDESPACE_MARKER_DIR/conductor-run` exists**: this is a pipeline handoff (e.g. reviewer's PASS routing back to you), not a fresh user request. `conductor-run`'s content is the project-root-relative path to the backlog file this run dispatches from - read that path, not a fixed filename.
+- **No goal given, no `$CLAUDESPACE_MARKER_DIR/conductor-run`**: the user is resuming after the initial checkpoint (Completion's "First invocation" step) without repeating the goal. Look for `docs/backlog-*.md` files with no `conductor-run` history - the most recently modified is normally the one just reviewed at checkpoint. If more than one plausibly qualifies, ask the user which.
 
 ---
 
@@ -150,8 +150,8 @@ This decision is independent of `checkpoint` - a checkpoint item can still skip 
 Resolve the active backlog file per "Which backlog?" above, then:
 
 - The resolved backlog file doesn't exist yet (new goal): this is the first invocation for this goal. Go to step 2.
-- The resolved backlog file exists and this run has no `.claudespace/conductor-run` marker yet: the user has reviewed/edited the backlog and is resuming after the checkpoint. Go to step 4.
-- The resolved backlog file exists and `.claudespace/conductor-run` exists: you are being invoked because reviewer passed the item this run most recently dispatched (`route: conductor` in `reviewer.done` - read the review path it names). Go to step 5.
+- The resolved backlog file exists and this run has no `$CLAUDESPACE_MARKER_DIR/conductor-run` marker yet: the user has reviewed/edited the backlog and is resuming after the checkpoint. Go to step 4.
+- The resolved backlog file exists and `$CLAUDESPACE_MARKER_DIR/conductor-run` exists: you are being invoked because reviewer passed the item this run most recently dispatched (`route: conductor` in `reviewer.done` - read the review path it names). Go to step 5.
 
 ---
 
@@ -165,7 +165,7 @@ Do not invent scope the goal didn't ask for, and do not silently narrow it - if 
 
 ## 3. Persist and checkpoint
 
-Persist the backlog. Do not create `.claudespace/conductor-run` yet, and do not dispatch anything. Report the backlog per Completion and stop - this is the mandatory checkpoint.
+Persist the backlog. Do not create `$CLAUDESPACE_MARKER_DIR/conductor-run` yet, and do not dispatch anything. Report the backlog per Completion and stop - this is the mandatory checkpoint.
 
 ---
 
@@ -173,7 +173,7 @@ Persist the backlog. Do not create `.claudespace/conductor-run` yet, and do not 
 
 Read the resolved backlog file. Find the first `pending` item whose every `requires` id is `done`.
 
-- If one exists: mark it `in-progress`, create `.claudespace/conductor-run` if it doesn't exist (sentinel file - its presence, not its content, is what matters), decide where to dispatch per "Choosing where to dispatch" above, and hand off to that role with the item's description as the topic (see Completion).
+- If one exists: mark it `in-progress`, create `$CLAUDESPACE_MARKER_DIR/conductor-run` if it doesn't exist (sentinel file - its presence, not its content, is what matters), decide where to dispatch per "Choosing where to dispatch" above, and hand off to that role with the item's description as the topic (see Completion).
 - If none exists (backlog empty, or every remaining `pending` item has an unmet `requires`): stop per "Stopping conditions."
 
 ---
@@ -248,7 +248,7 @@ Fire-and-forget: it types the text into another role's pane and returns immediat
 ## First invocation (backlog just generated)
 
 1. Persist `docs/backlog-<slug>.md` (or the project-defined equivalent location) - see Backlog Format and "Which backlog?" for naming.
-2. Do **not** create any `.claudespace/conductor.done` marker and do **not** create `.claudespace/conductor-run`. This is the mandatory checkpoint - nothing should auto-advance from here.
+2. Do **not** create any `$CLAUDESPACE_MARKER_DIR/conductor.done` marker and do **not** create `$CLAUDESPACE_MARKER_DIR/conductor-run`. This is the mandatory checkpoint - nothing should auto-advance from here.
 3. Report:
 
 - Goal, as understood
@@ -261,7 +261,7 @@ Wait for the user to review/edit the backlog and resume you explicitly.
 ## Dispatching an item (step 4)
 
 1. Update the resolved backlog file: the dispatched item's `status` becomes `in-progress`.
-2. Create `.claudespace/conductor-run` if it does not already exist (`mkdir -p .claudespace` first if needed), whose sole content is the project-root-relative path to the resolved backlog file - this is what lets a later invocation with no goal text (see "Which backlog?") find the right file without guessing.
+2. Create `$CLAUDESPACE_MARKER_DIR/conductor-run` if it does not already exist (`mkdir -p $CLAUDESPACE_MARKER_DIR` first if needed), whose sole content is the project-root-relative path to the resolved backlog file - this is what lets a later invocation with no goal text (see "Which backlog?") find the right file without guessing.
 3. Create `$CLAUDESPACE_MARKER_DIR/conductor.done`. Dispatching to researcher (the default): its sole content is the item's description, which researcher receives as its topic. Skipping ahead per "Choosing where to dispatch": write `route: principal` or `route: implementer` as the first line, followed by the item's description on the remaining line(s), e.g.:
 
    ```
@@ -275,7 +275,7 @@ Wait for the user to review/edit the backlog and resume you explicitly.
 ## Stopping (any condition in "Stopping conditions" other than the initial checkpoint)
 
 1. Update the resolved backlog file if needed (e.g. marking the just-passed item `done`).
-2. Do **not** create `.claudespace/conductor.done` - there is nothing further to hand off.
+2. Do **not** create `$CLAUDESPACE_MARKER_DIR/conductor.done` - there is nothing further to hand off.
 3. Report clearly which stopping condition applies and the full backlog status, per "Stopping conditions" above.
 
 Reusing a marker path already written this session (e.g. `conductor.done` again for an ad hoc routed request, outside the normal per-item dispatch flow above): rewrite the marker file itself, a fresh write even if identical - the Stop hook only re-sends when the marker's own mtime is newer than its last handoff.
