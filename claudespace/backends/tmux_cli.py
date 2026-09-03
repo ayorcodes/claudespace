@@ -237,6 +237,31 @@ async def send_keys_literal(target: str, text: str) -> None:
     await run("send-keys", "-t", target, "-l", "--", text)
 
 
+async def send_text_paste(target: str, text: str) -> None:
+    """Inject ``text`` into ``target`` as one atomic bracketed paste.
+
+    ``send-keys -l`` streams text as a raw keystroke burst. A multi-KB
+    prompt (e.g. a conductor handoff carrying an inline dispatch) overruns
+    the receiving TUI's raw-mode input buffer: only the trailing ~0.5 KB
+    survives and the leading portion is silently dropped, so the pane sees a
+    prompt that starts mid-word. Routing through a paste buffer with
+    ``paste-buffer -p`` frames the whole string in bracketed-paste escape
+    sequences, so the app ingests it in one paste instead of key-by-key -
+    the tmux equivalent of iTerm2's ``async_send_text`` single PTY write.
+
+    Like ``send-keys -l`` it never submits on its own: bracketed paste keeps
+    a trailing newline inert, so the explicit ``send_enter`` that every
+    prompt path issues afterwards is still what submits. The buffer name is
+    derived from ``target`` so concurrent handoffs to different panes can't
+    clobber each other's buffer, and ``-d`` frees it once pasted. ``--``
+    guards a prompt that begins with ``-`` from being read as an option, the
+    same reason ``send_keys_literal`` uses it.
+    """
+    buffer = "cs_" + "".join(ch if ch.isalnum() else "_" for ch in target)
+    await run("set-buffer", "-b", buffer, "--", text)
+    await run("paste-buffer", "-d", "-p", "-b", buffer, "-t", target)
+
+
 async def send_enter(target: str) -> None:
     await run("send-keys", "-t", target, "Enter")
 

@@ -548,7 +548,10 @@ class TmuxBackend(TerminalBackend):
                 role,
             )
             return
-        await tmux_cli.send_keys_literal(pane.pane_id, text)
+        # Paste rather than send-keys: a handoff prompt can carry a large
+        # inline dispatch, and send-keys -l drops the leading portion of a
+        # multi-KB burst (see tmux_cli.send_text_paste).
+        await tmux_cli.send_text_paste(pane.pane_id, text)
         if not submit:
             return
 
