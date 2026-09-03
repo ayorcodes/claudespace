@@ -9,6 +9,7 @@ import sys
 import pytest
 
 from claudespace import cli
+from claudespace.backends.cmux import CmuxBackend
 from claudespace.backends.iterm import ItermBackend
 from claudespace.backends.tmux import TmuxBackend
 
@@ -26,6 +27,21 @@ def test_tmux_flag_can_be_set_on_the_main_command():
 def test_tmux_flag_can_be_set_on_watchdog():
     args = cli._build_parser().parse_args(["watchdog", "--tmux"])
     assert args.tmux is True
+
+
+def test_cmux_flag_defaults_to_false():
+    args = cli._build_parser().parse_args(["--root", "/tmp"])
+    assert args.cmux is False
+
+
+def test_cmux_flag_can_be_set_on_the_main_command():
+    args = cli._build_parser().parse_args(["--cmux", "--root", "/tmp"])
+    assert args.cmux is True
+
+
+def test_cmux_flag_can_be_set_on_watchdog():
+    args = cli._build_parser().parse_args(["watchdog", "--cmux"])
+    assert args.cmux is True
 
 
 def test_resolve_backend_defaults_to_iterm2(monkeypatch, tmp_path):
@@ -48,6 +64,29 @@ def test_resolve_backend_force_tmux_overrides_an_explicit_iterm2_config(
     config_path.write_text('[terminal]\nbackend = "iterm2"\n')
     monkeypatch.setattr("claudespace.config.CONFIG_PATH", config_path)
     assert isinstance(cli._resolve_backend(force_tmux=True), TmuxBackend)
+
+
+def test_resolve_backend_force_cmux_overrides_the_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLAUDESPACE_TERMINAL", raising=False)
+    monkeypatch.setattr("claudespace.config.CONFIG_PATH", tmp_path / "nope.toml")
+    assert isinstance(cli._resolve_backend(force_cmux=True), CmuxBackend)
+
+
+def test_resolve_backend_force_cmux_overrides_an_explicit_iterm2_config(
+    monkeypatch, tmp_path
+):
+    monkeypatch.delenv("CLAUDESPACE_TERMINAL", raising=False)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[terminal]\nbackend = "iterm2"\n')
+    monkeypatch.setattr("claudespace.config.CONFIG_PATH", config_path)
+    assert isinstance(cli._resolve_backend(force_cmux=True), CmuxBackend)
+
+
+def test_resolve_backend_rejects_both_tmux_and_cmux(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLAUDESPACE_TERMINAL", raising=False)
+    monkeypatch.setattr("claudespace.config.CONFIG_PATH", tmp_path / "nope.toml")
+    with pytest.raises(SystemExit):
+        cli._resolve_backend(force_tmux=True, force_cmux=True)
 
 
 class TestThinkDefaultAndManualOverride:

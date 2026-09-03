@@ -35,9 +35,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="claudespace",
         description="Build or attach to a terminal development workspace for a "
-        "folder (iTerm2 by default; pass --tmux, or set 'terminal.backend' "
-        "in ~/.config/claudespace/config.toml, for the tmux backend - the "
-        "supported way to run claudespace in Ghostty).",
+        "folder (iTerm2 by default; pass --tmux or --cmux, or set "
+        "'terminal.backend' in ~/.config/claudespace/config.toml, for the "
+        "tmux or cmux backend).",
     )
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser(
@@ -109,6 +109,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "one. Same effect as [terminal] backend = \"tmux\" in "
         "~/.config/claudespace/config.toml, for this invocation only.",
     )
+    watchdog_parser.add_argument(
+        "--cmux",
+        action="store_true",
+        help="Watch a cmux-backed workspace instead of the default iTerm2 "
+        "one. Same effect as [terminal] backend = \"cmux\" in "
+        "~/.config/claudespace/config.toml, for this invocation only. "
+        "Mutually exclusive with --tmux.",
+    )
     parser.add_argument(
         "--root",
         default=os.getcwd(),
@@ -177,6 +185,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "effect as [terminal] backend = \"tmux\" in "
         "~/.config/claudespace/config.toml, for this invocation only - "
         "iTerm2 stays the default when this is omitted.",
+    )
+    parser.add_argument(
+        "--cmux",
+        action="store_true",
+        help="Use the cmux backend for this run instead of the default "
+        "iTerm2. Same effect as [terminal] backend = \"cmux\" in "
+        "~/.config/claudespace/config.toml, for this invocation only - "
+        "iTerm2 stays the default when this is omitted. Mutually "
+        "exclusive with --tmux.",
     )
     parser.add_argument(
         "--list-templates",
@@ -332,18 +349,23 @@ async def _run_watchdog(
     )
 
 
-def _resolve_backend(*, force_tmux: bool = False) -> TerminalBackend:
+def _resolve_backend(*, force_tmux: bool = False, force_cmux: bool = False) -> TerminalBackend:
     """Resolve the configured terminal backend once, at CLI entry (AD5) -
     everything downstream (workspace build, watchdog) is threaded this same
     instance rather than re-resolving config independently.
 
-    ``--tmux`` (``force_tmux``) overrides config/env for this invocation
-    only, the same way ``CLAUDESPACE_TERMINAL`` does - iTerm2 remains the
-    default and the config-file selection is still what a plain
-    ``claudespace`` (no flag) uses.
+    ``--tmux``/``--cmux`` (``force_tmux``/``force_cmux``) override config/env
+    for this invocation only, the same way ``CLAUDESPACE_TERMINAL`` does -
+    iTerm2 remains the default and the config-file selection is still what a
+    plain ``claudespace`` (no flag) uses. The two are mutually exclusive -
+    passing both is a usage error, not a silent pick.
     """
+    if force_tmux and force_cmux:
+        logger.error("--tmux and --cmux are mutually exclusive.")
+        sys.exit(1)
+    name = "tmux" if force_tmux else "cmux" if force_cmux else None
     try:
-        return get_backend("tmux" if force_tmux else None)
+        return get_backend(name)
     except ValueError as exc:
         logger.error(exc)
         sys.exit(1)
@@ -386,11 +408,15 @@ def _ensure_terminal_launched(backend: TerminalBackend) -> bool:
     Only meaningful for the iTerm2 path: the tmux backend builds entirely
     headlessly against a detached tmux server (AD3) and only spawns a
     viewer terminal afterwards, in ``TmuxBackend.activate_window`` - there is
-    nothing to cold-launch before that, so this is a no-op for it.
+    nothing to cold-launch before that, so this is a no-op for it. The cmux
+    backend has its own reachability preflight in ``CmuxBackend.run`` (D4) -
+    cmux must already be running for that to pass, so there is likewise
+    nothing for this function to cold-launch.
     """
+    from claudespace.backends.cmux import CmuxBackend
     from claudespace.backends.tmux import TmuxBackend
 
-    if isinstance(backend, TmuxBackend):
+    if isinstance(backend, (TmuxBackend, CmuxBackend)):
         return False
 
     was_running = utils.is_iterm_running()
@@ -441,7 +467,7 @@ def main() -> None:
         return
 
     if args.command == "watchdog":
-        backend = _resolve_backend(force_tmux=args.tmux)
+        backend = _resolve_backend(force_tmux=args.tmux, force_cmux=args.cmux)
         from claudespace.backends.iterm import ItermBackend
 
         if isinstance(backend, ItermBackend):
@@ -473,7 +499,7 @@ def main() -> None:
         logger.error(exc)
         sys.exit(1)
 
-    backend = _resolve_backend(force_tmux=args.tmux)
+    backend = _resolve_backend(force_tmux=args.tmux, force_cmux=args.cmux)
     just_launched_terminal = _ensure_terminal_launched(backend)
 
     runner = functools.partial(

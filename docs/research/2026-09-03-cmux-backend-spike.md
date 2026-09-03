@@ -147,11 +147,114 @@ B2 teardown) fall short: proceed and log each as a tracked workaround.
 Append raw JSON for A4/A5/A6/A7/A10 and B3 to the results section — the
 go/no-go must be reproducible, not a vibe.
 
-## Results (fill in when run)
+## Results (run 2026-09-03)
 
-- cmux version / macOS version: …
-- Socket path + perms: …
-- Part A: A0 … A12 …
-- `pane.list` field inventory (A7): …
-- Part B: B1 … B3 …
-- Verdict: GO / conditional GO / NO-GO — because …
+- cmux version / macOS version: cmux 0.64.22 (102) [ddd4a01bc], macOS 26.5.2
+  (Darwin 25.5.0), installed via `brew install --cask cmux`.
+- Socket path + perms: `~/.local/state/cmux/cmux.sock` (NOT `/tmp/cmux.sock`
+  as the setup snippet assumed — spike doc's `CMUX_SOCKET_PATH` default is
+  wrong), `srw-------` (0600), owned by the invoking user.
+- **Auth model differs from what this doc assumed.** 0600/owner is necessary
+  but not sufficient: cmux also enforces `automation.socketControlMode` in
+  `~/.config/cmux/cmux.json` (schema enum: `off|cmuxOnly|automation|password|
+  allowAll|openAccess|fullOpenAccess|notifications|full`; default
+  `cmuxOnly`). Under the default, an external CLI process (not spawned inside
+  a cmux pane) gets `Access denied - only processes started inside cmux can
+  connect` even with correct socket perms. Had to set
+  `"automation": {"socketControlMode": "automation"}` and `cmux
+  reload-config` before any probe could run. **A backend integration must
+  document/require this setting** (or detect+prompt) — `0600/owner-checked
+  socket` alone, as `environment.is_cmux_installed()` was scoped to check, is
+  not the whole gate.
+- API shape: not raw `pane.create`/`surface.send_text` JSON-RPC as this doc
+  assumed for casual use — there's a real CLI (`cmux <command>`) wrapping the
+  same v2 RPC methods, plus a `cmux rpc <method> <json>` escape hatch for the
+  full raw JSON-RPC method space (methods are named `surface.list`,
+  `surface.send_text`, etc., matching this doc's assumed naming — just
+  invoked via `cmux rpc <method> '{...}'`, or via higher-level CLI verbs like
+  `workspace create`, `new-split`, `send`, `capture-pane`, `list-panels`,
+  `rename-tab`). Either interface is usable; the CLI is friendlier for a
+  Python subprocess-based backend, `cmux rpc` covers anything the CLI
+  doesn't expose a verb for.
+
+### Part A
+
+- A0 [MUST] **PASS (with caveat above).** `cmux ping` → `PONG` once
+  `socketControlMode` set to `automation`. `cmux capabilities` confirms
+  `"access_mode": "automation"`.
+- A1 [MUST] **PASS.** `cmux workspace create --cwd <dir>` → `OK workspace:N`,
+  stable ref usable in later calls; `cmux rpc workspace.list` gives full
+  UUID + ref + cwd.
+- A2 [MUST] **PASS.** `cmux new-split right|down` x4 → 5 distinct
+  `surface:N` refs (`surface:4..8`), each with a distinct `pane_ref`;
+  `list-panels` / `cmux rpc surface.list` show all five.
+- A3 [MUST] **PASS.** `cmux send --surface surface:6 "echo cmux-marker-123"`
+  + `cmux send-key --surface surface:6 enter` landed only in surface:6.
+  Submit is two calls (`send` then `send-key enter`), not embedded in one —
+  matches this doc's "record which" note.
+- A4 [MUST] **PASS.** `cmux capture-pane --surface surface:6 --lines 20`
+  returned exactly the marker output; `capture-pane` on surface:4 (untouched)
+  showed no marker.
+- A5 [MUST] **PASS — the top must-pass held.** Switched the active workspace
+  to a different one (`workspace select workspace:2`) and brought Finder
+  frontmost (fully backgrounding the cmux app), then re-ran `capture-pane`
+  against the original surface:6 in the backgrounded workspace:4 — content
+  still returned correctly. Reads are not focus-gated.
+- A6 [MUST] **PASS.** `cmux rename-tab --surface surface:6 "researcher"` set
+  the title; round-tripped via both `list-panels` and `cmux rpc
+  surface.list` (`"title": "researcher"`). `surface.title` is the field to
+  own for `role` encoding.
+- A7 [MUST] **PASS.** Full field inventory captured via `cmux rpc
+  workspace.list` and `cmux rpc surface.list` — see below.
+- A8 [MUST] **PASS.** Multiple workspaces (workspace:1/2/3/4 concurrently)
+  independently addressable; calls scoped by `--workspace` didn't cross-talk;
+  `workspace.list` shows all with stable UUIDs+refs.
+- A9 [WANT] Not exercised this run (no blocking reason to skip; low risk,
+  `surface.focus`/`cmux ... --focus` exists in the capability list).
+- A10 [MUST] **PASS.** Sent a single `send` call with an embedded ~3KB
+  string (`START-...3000 x's...-END`); `capture-pane`-equivalent output file
+  showed both the leading `START-` marker and trailing `-END` marker intact,
+  full byte count (3051) preserved — no front-truncation, no chunking
+  needed.
+- A11 [WANT] Not exercised.
+- A12 [WANT] Not exercised.
+
+`surface.list` field inventory (A7, one entry, from `cmux rpc surface.list`):
+`focused` (bool), `id` (UUID), `index`, `index_in_pane`, `initial_command`,
+`pane_id` (UUID), `pane_ref` (`pane:N`), `ref` (`surface:N`),
+`requested_working_directory`, `resume_binding`, `selected_in_pane`,
+`title` (the writable identity field, confirmed via A6), `tmux_start_command`,
+`type`. `workspace.list` fields include `current_directory`, `custom_title`,
+`title` (defaults to `~cwd`, settable via `workspace rename` — not tested
+this run), `id`/`ref`, `selected`, plus an unused-for-us `remote{}` block
+(SSH/tmux remote-workspace state) and `listening_ports`.
+
+### Part B
+
+- B1 [MUST] **PASS (de facto).** The A1–A6 sequence above ran end-to-end from
+  a plain shell with zero GUI interaction after initial app launch/onboarding
+  — workspace create, 5-pane build, targeted send+read, rename, all scripted.
+- B2 [WANT] **PASS.** `cmux workspace close workspace:N --force` cleanly
+  tore down the test workspace and its panes (used twice, both clean).
+- B3 [MUST] **PASS.** From a brand-new `bash -c '...'` subshell (no
+  inherited state), discovered the target workspace purely by matching
+  `current_directory` in `cmux rpc workspace.list`, then found the "reviewer"
+  pane purely by matching `title` in `cmux rpc surface.list` scoped to that
+  workspace_id. No in-memory state required — confirms a Stop-hook-style
+  fresh process can rediscover panes.
+
+### Verdict: **GO**
+
+Every [MUST] passed: A0, A1, A2, A3, A4, A5, A6, A7, A8, A10, B1, B3. The one
+real surprise is **not architectural** — it's that
+`environment.is_cmux_installed()` as scoped in the ADR (app present + 0600/
+owner-checked socket) is necessary but not sufficient; it must also confirm
+`automation.socketControlMode` isn't left at the default `cmuxOnly`, or the
+backend will get `Access denied` on first use despite everything else being
+correct. Recommend the detection step run a `cmux ping` (or `cmux
+capabilities`) liveness check, not just a socket-file stat, and surface a
+clear error/remediation (the exact JSON key + value to set, per this run)
+when it fails. No changes to the planned primitive mapping in the ADR are
+needed otherwise — `pane.create`→`new-split`/`surface.create`,
+`surface.send_text`→`send`+`send-key`, `capture-pane`→`capture-pane`/
+`surface.read_text`, and title-as-identity all map cleanly.
