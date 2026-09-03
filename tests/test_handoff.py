@@ -10,7 +10,11 @@ import asyncio
 import os
 
 from claudespace import pipeline
-from claudespace.handoff import NAG_STATE_SUFFIX, _maybe_nag_missing_marker
+from claudespace.handoff import (
+    HANDOFF_STATE_SUFFIX,
+    NAG_STATE_SUFFIX,
+    _maybe_nag_missing_marker,
+)
 
 
 class _FakeBackend:
@@ -86,6 +90,74 @@ def test_run_started_none_treats_existing_nagged_as_valid(tmp_path):
 def test_no_existing_nagged_still_nags_without_checking_run_doc(tmp_path):
     root, done_path = _prep(tmp_path)
     backend = _FakeBackend(run_started=100.0)
+
+    fired = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+
+    assert fired is True
+    assert os.path.isfile(done_path + NAG_STATE_SUFFIX)
+
+
+def _write_stale_and_handed(path: str, *, marker_mtime: float, sentinel_mtime: float) -> None:
+    with open(path, "w") as f:
+        f.write("docs/x.md")
+    os.utime(path, (marker_mtime, marker_mtime))
+    sentinel_path = path + HANDOFF_STATE_SUFFIX
+    open(sentinel_path, "w").close()
+    os.utime(sentinel_path, (sentinel_mtime, sentinel_mtime))
+
+
+def test_stale_but_already_handed_done_marker_is_not_nagged(tmp_path):
+    root, done_path = _prep(tmp_path)
+    _write_stale_and_handed(done_path, marker_mtime=100.0, sentinel_mtime=200.0)
+    backend = _FakeBackend(run_started=None)
+
+    fired = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+
+    assert fired is False
+    assert not os.path.isfile(done_path + NAG_STATE_SUFFIX)
+
+
+def test_stale_but_already_handed_blocked_marker_is_not_nagged(tmp_path):
+    root, done_path = _prep(tmp_path, role="implementer")
+    blocked_path = pipeline.blocked_marker_path(root, "implementer", "i1")
+    _write_stale_and_handed(blocked_path, marker_mtime=100.0, sentinel_mtime=200.0)
+    backend = _FakeBackend(run_started=None)
+
+    fired = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+
+    assert fired is False
+    assert not os.path.isfile(done_path + NAG_STATE_SUFFIX)
+
+
+def test_marker_present_without_handed_off_sentinel_is_not_touched_by_suppression(tmp_path):
+    # Regression guard for the "not suppressed" edge case (design doc edge
+    # case 2): the role wrote the marker, but the hook hasn't processed it
+    # (or the send failed) - no sentinel means no proof it landed, so this is
+    # a *fresh* marker (caught by the pre-existing _read_fresh_marker check,
+    # not the new _marker_present_and_handed suppression) and must not nag.
+    root, done_path = _prep(tmp_path)
+    with open(done_path, "w") as f:
+        f.write("docs/x.md")
+    os.utime(done_path, (1.0, 1.0))
+    backend = _FakeBackend(run_started=None)
+
+    fired = asyncio.run(
+        _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")
+    )
+
+    assert fired is False
+    assert not os.path.isfile(done_path + NAG_STATE_SUFFIX)
+
+
+def test_genuinely_missing_marker_still_nags(tmp_path):
+    root, done_path = _prep(tmp_path)
+    backend = _FakeBackend(run_started=None)
 
     fired = asyncio.run(
         _maybe_nag_missing_marker(backend, root=root, instance="i1", role="implementer")

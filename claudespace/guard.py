@@ -21,10 +21,13 @@ So: for a role in ``READ_ONLY_ROLES``, a write is allowed only to
   Planning Brief, Implementation Design, review, memory note, backlog) is a
   document, wherever the project's own conventions put it.
 
-Anything else is denied with a reason naming the role, which the model reads
-and can act on. Deliberately a path rule rather than a directory allowlist:
-projects define their own documentation locations (see ``pipeline.py``), so
-there is no fixed ``docs/`` to permit.
+Anything else is denied with an imperative reason naming the role and the
+exact marker to write (route: implementer) - a block is a routing
+instruction to act on immediately, not advice a role can go dormant in front
+of (a real failure mode: a block landed and the role just waited for the
+user to say "route it"). Deliberately a path rule rather than a directory
+allowlist: projects define their own documentation locations (see
+``pipeline.py``), so there is no fixed ``docs/`` to permit.
 
 Like ``handoff.py`` this is wired in globally and must be a fast no-op
 everywhere else - it exits silently (allowing the call) whenever
@@ -38,6 +41,7 @@ import os
 import sys
 
 from claudespace.config import READ_ONLY_ROLES
+from claudespace.pipeline import done_marker_path
 
 MARKER_DIR_SEGMENT = f"{os.sep}.claudespace{os.sep}"
 DOC_SUFFIXES = (".md", ".markdown")
@@ -61,8 +65,22 @@ def is_allowed_path(path: str) -> bool:
     return normalized.lower().endswith(DOC_SUFFIXES)
 
 
-def decide(payload: dict, role: str | None) -> str | None:
-    """Return a denial reason, or ``None`` to allow the call through."""
+def decide(
+    payload: dict,
+    role: str | None,
+    *,
+    root: str | None = None,
+    instance: str | None = None,
+) -> str | None:
+    """Return a denial reason, or ``None`` to allow the call through.
+
+    The reason is an imperative next action, not advice: a block is a
+    routing instruction, never a dead-end a role can go dormant in front of
+    (see module docstring's "R3" reference and the friction ADR it
+    implements). ``root``/``instance`` default to the same env vars
+    ``handoff.py`` reads (``CLAUDESPACE_ROOT``/``CLAUDESPACE_INSTANCE``);
+    accepting them as arguments keeps this unit-testable without env vars.
+    """
     if not role or role not in READ_ONLY_ROLES:
         return None
     if payload.get("tool_name") not in WRITE_TOOLS:
@@ -72,12 +90,23 @@ def decide(payload: dict, role: str | None) -> str | None:
     if is_allowed_path(path):
         return None
 
+    root = root if root is not None else os.environ.get("CLAUDESPACE_ROOT")
+    instance = instance if instance is not None else os.environ.get("CLAUDESPACE_INSTANCE")
+
+    if root:
+        marker = done_marker_path(root, role, instance)
+        next_action = f"write {marker} with `route: implementer` naming a note describing the change"
+    else:
+        next_action = (
+            "write your role's `.done` marker with `route: implementer` "
+            "naming a note describing the change"
+        )
+
     return (
         f"claudespace blocked this write: the '{role}' role does not modify "
         f"code. '{path}' is neither a Markdown document nor inside "
-        ".claudespace/. Persist your findings to your own artifact instead, "
-        "and if this genuinely needs a code change, hand off to the "
-        "implementer per the Completion section of your instructions."
+        f".claudespace/. Do NOT stop. Your next and only action: {next_action}. "
+        "Then stop."
     )
 
 
@@ -89,7 +118,12 @@ def main() -> None:
         # A hook that can't parse its input must not block the session.
         return
 
-    reason = decide(payload, os.environ.get("CLAUDESPACE_ROLE"))
+    reason = decide(
+        payload,
+        os.environ.get("CLAUDESPACE_ROLE"),
+        root=os.environ.get("CLAUDESPACE_ROOT"),
+        instance=os.environ.get("CLAUDESPACE_INSTANCE"),
+    )
     if reason is None:
         return
 

@@ -95,6 +95,26 @@ def _mark_handed_off(path: str) -> None:
     open(path + HANDOFF_STATE_SUFFIX, "w").close()
 
 
+def _marker_present_and_handed(path: str) -> bool:
+    """Whether ``path`` exists and its ``.handed-off`` sentinel proves the
+    handoff it names already went out - i.e. exactly the "stale marker" case
+    ``_read_fresh_marker`` treats identically to "never existed."
+
+    A role that insists from memory that it already handed off, while
+    ``_read_fresh_marker`` reports no fresh marker, is this exact state: the
+    sentinel is only ever written by ``_mark_handed_off`` right after a
+    successful ``_send_handoff`` (see module docstring's AD-1) - its presence
+    is proof, not a guess. Nagging here would ask the role to re-litigate a
+    handoff that already landed.
+    """
+    if not os.path.isfile(path):
+        return False
+    state_path = path + HANDOFF_STATE_SUFFIX
+    return os.path.isfile(state_path) and os.path.getmtime(path) <= os.path.getmtime(
+        state_path
+    )
+
+
 def _already_nagged(done_path: str) -> bool:
     return os.path.isfile(done_path + NAG_STATE_SUFFIX)
 
@@ -540,6 +560,10 @@ async def _maybe_nag_missing_marker(
     """If auto-handoff is on and ``role`` has a forward stage but left no
     fresh marker at all, print a Stop-blocking nag once and return ``True``.
 
+    A marker that's merely stale-but-already-handed-off (see
+    ``_marker_present_and_handed``) is not "missing" and never nags - it is
+    proof the handoff already went out, not a gap to fill.
+
     Only fires for roles that have somewhere to hand off to
     (``stage.next_role``) - reviewer's terminal PASS case is normally
     exempt, since it has no forward marker to forget. That exemption itself
@@ -583,6 +607,14 @@ async def _maybe_nag_missing_marker(
     if _read_fresh_marker(done_path) or (
         stage.bounce_to and _read_fresh_marker(blocked_path)
     ):
+        return False
+
+    if _marker_present_and_handed(done_path) or (
+        stage.bounce_to and _marker_present_and_handed(blocked_path)
+    ):
+        # Already handed off, just stale - not missing. Exit silently rather
+        # than nag the role to re-litigate a handoff that already landed
+        # (see _marker_present_and_handed).
         return False
 
     if _already_nagged(done_path):
