@@ -11,7 +11,7 @@ import uuid
 import pytest
 
 from claudespace.backends import tmux_cli
-from claudespace.backends.tmux import TmuxBackend
+from claudespace.backends.tmux import TmuxBackend, _slugify_run_doc
 from claudespace.config import PaneConfig, Template
 
 
@@ -35,6 +35,28 @@ def _no_persona_baking(tmp_path, monkeypatch):
 
 
 pytestmark = pytest.mark.skipif(not tmux_cli.is_tmux_available(), reason="tmux not installed")
+
+
+class TestSlugifyRunDoc:
+    def test_strips_docs_path_date_and_extension(self):
+        assert _slugify_run_doc("docs/research/2026-09-03-fix-kitchen-heat-link.md") == "fix-kitchen-heat-link"
+
+    def test_handles_free_text_backlog_description(self):
+        assert _slugify_run_doc("Add dark mode") == "add-dark-mode"
+
+    def test_truncates_long_slugs(self):
+        long_doc = "docs/research/2026-09-03-" + ("a" * 50) + ".md"
+        slug = _slugify_run_doc(long_doc)
+        assert len(slug) <= 30
+
+    def test_empty_or_symbols_only_falls_back_to_run(self):
+        assert _slugify_run_doc("docs/research/2026-09-03-.md") == "run"
+        assert _slugify_run_doc("///") == "run"
+
+    def test_no_leading_or_trailing_hyphens(self):
+        slug = _slugify_run_doc("docs/research/2026-09-03-foo-bar-.md")
+        assert not slug.startswith("-")
+        assert not slug.endswith("-")
 
 
 # A fake `claude`: prints the ready marker once, then echoes each further
@@ -131,7 +153,7 @@ class TestStateRoundTrip:
         marker = _marker(tmp_path)
 
         async def _scenario():
-            window = await backend.build_workspace(
+            await backend.build_workspace(
                 marker=marker,
                 root=marker,
                 template_name="native",
@@ -148,6 +170,67 @@ class TestStateRoundTrip:
                 p.pane_id async for _role, p in backend.each_pane(marker=marker)
             }]
             assert all(r["@cs_run_doc"] == "docs/x.md" for r in our_rows)
+
+            # set_run_doc renames the session for the task - kill_session
+            # needs the *current* name, not the one build_workspace's own
+            # return value would have had before that rename.
+            current = await backend.find_workspace(marker)
+            await tmux_cli.kill_session(current.session)
+
+        asyncio.run(_scenario())
+
+
+class TestSessionRenaming:
+    def test_set_run_doc_renames_the_session_to_a_task_slug(self, tmp_path):
+        backend = TmuxBackend(persist=False)
+        marker = _marker(tmp_path)
+
+        async def _scenario():
+            window = await backend.build_workspace(
+                marker=marker, root=marker, template_name="native", template=_native_template()
+            )
+            prefix = backend._session_prefix(window.session)
+
+            await backend.set_run_doc(
+                marker=marker,
+                doc="docs/research/2026-09-03-fix-kitchen-heat-link.md",
+                started_at=1.0,
+            )
+            renamed = await backend.find_workspace(marker)
+            assert renamed.session == f"{prefix}-fix-kitchen-heat-link"
+
+            # A second, different task re-renames it - tracks the *current*
+            # task, not just the first one.
+            await backend.set_run_doc(marker=marker, doc="docs/research/2026-09-03-add-dark-mode.md", started_at=2.0)
+            renamed_again = await backend.find_workspace(marker)
+            assert renamed_again.session == f"{prefix}-add-dark-mode"
+
+            await tmux_cli.kill_session(renamed_again.session)
+
+        asyncio.run(_scenario())
+
+    def test_pane_lookups_still_work_after_a_rename(self, tmp_path):
+        # Renaming is cosmetic - every lookup matches on @cs_* pane tags,
+        # never the session name, so find_role_pane/each_pane must keep
+        # working against the renamed session exactly as before.
+        backend = TmuxBackend(persist=False)
+        marker = _marker(tmp_path)
+
+        async def _scenario():
+            await backend.build_workspace(
+                marker=marker, root=marker, template_name="native", template=_native_template()
+            )
+            await backend.set_run_doc(marker=marker, doc="docs/x.md", started_at=1.0)
+
+            pane = await backend.find_role_pane(marker=marker, role="planner")
+            assert pane is not None
+
+            pairs = [pair async for pair in backend.each_pane(marker=marker)]
+            assert {role for role, _p in pairs} == {
+                "principal", "implementer", "reviewer", "planner", "researcher"
+            }
+
+            window = await backend.find_workspace(marker)
             await tmux_cli.kill_session(window.session)
 
         asyncio.run(_scenario())

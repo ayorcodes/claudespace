@@ -22,6 +22,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -77,6 +78,28 @@ TMUX_NOT_FOUND_HELP = (
 # attaches/builds after the full wait rather than hanging forever.
 AUTORESTORE_WAIT_SECONDS = 8.0
 AUTORESTORE_POLL_INTERVAL_SECONDS = 0.25
+
+
+_SLUG_MAX_LEN = 30
+
+
+def _slugify_run_doc(doc: str) -> str:
+    """A short, tmux-session-name-safe slug naming the current run, from a
+    ``set_run_doc`` artifact path (e.g.
+    ``docs/research/2026-09-03-fix-kitchen-heat-link.md``) or free-text
+    backlog description (conductor's own dispatches). Used to rename the
+    session so ``claudespace --restore`` shows what's actually being worked
+    on instead of an opaque instance id.
+
+    tmux session names can't contain ``.`` or ``:``; kept conservative
+    (alphanumeric + hyphens only) rather than relying on exactly which
+    characters tmux happens to tolerate.
+    """
+    base = doc.strip().rsplit("/", 1)[-1]
+    base = re.sub(r"\.md$", "", base, flags=re.IGNORECASE)
+    base = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", base)  # strip a leading date
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", base).strip("-").lower()
+    return slug[:_SLUG_MAX_LEN].rstrip("-") or "run"
 
 
 def _version_too_old_help(found: str) -> str:
@@ -189,6 +212,16 @@ class TmuxBackend(TerminalBackend):
     def _session_name(marker: str, instance: str) -> str:
         digest = hashlib.sha1(marker.encode("utf-8")).hexdigest()[:8]
         return f"cs-{digest}-{instance[:8]}"
+
+    @staticmethod
+    def _session_prefix(session: str) -> str:
+        """The stable ``cs-<hash8>`` part of a session name, whatever
+        currently follows it (the original instance suffix, or an
+        already-applied task slug) - what ``rename_session_for_task``
+        re-derives the target name from, so repeated renames of the same
+        session never lose the marker's own identity prefix."""
+        parts = session.split("-", 2)
+        return "-".join(parts[:2]) if len(parts) >= 2 else session
 
     async def _matching_rows(
         self, marker: str, instance: str | None
@@ -582,11 +615,37 @@ class TmuxBackend(TerminalBackend):
     async def set_run_doc(
         self, *, marker: str, instance: str | None = None, doc: str, started_at: float
     ) -> None:
-        for row in await self._matching_rows(marker, instance):
+        rows = await self._matching_rows(marker, instance)
+        for row in rows:
             await tmux_cli.set_pane_option(row["pane_id"], "@cs_run_doc", doc)
             await tmux_cli.set_pane_option(
                 row["pane_id"], "@cs_run_started", str(started_at)
             )
+        await self._rename_sessions_for_task(rows, doc)
+
+    async def _rename_sessions_for_task(
+        self, rows: list[dict[str, str]], doc: str
+    ) -> None:
+        """Rename every distinct session in ``rows`` to reflect ``doc`` -
+        makes ``claudespace --restore``/`tmux list-sessions` show what's
+        actually being worked on instead of an opaque instance id. Renamed
+        again on the next ``set_run_doc`` (a fresh topic starting in an
+        already-used workspace), so the name tracks the *current* task, not
+        just the first one. Best-effort throughout: a rename failing never
+        blocks the state write it follows.
+        """
+        slug = _slugify_run_doc(doc)
+        sessions = {row["session_name"]: row.get("@cs_instance", "") for row in rows}
+        for session, instance in sessions.items():
+            target = f"{self._session_prefix(session)}-{slug}"
+            if target == session:
+                continue
+            renamed = await tmux_cli.rename_session(session, target)
+            if not renamed and instance:
+                # Target name already taken by an unrelated session -
+                # disambiguate with a short instance suffix rather than
+                # silently keeping the old (equally opaque) name.
+                await tmux_cli.rename_session(session, f"{target}-{instance[:4]}")
 
     # -- layout / reveal -----------------------------------------------------------
 

@@ -57,3 +57,26 @@ for full detail.
   Planning Brief and design doc rather than silently shipped — see AD5's
   amendment note for the reasoning on why it doesn't conflict with
   "no per-command flags required."
+- **Process failure caught and corrected (round 5→6):** `--restore`
+  (list/attach to tmux-backed sessions) and a global `--think`
+  default-on / `--manual` coupling flip both landed at the product
+  owner's direct request. The `--think`/`--manual` change is genuinely
+  out of scope of this brief (a pipeline-wide autonomy default, not
+  anything terminal-backend-specific) — its round-5 report *claimed* a
+  dated amendment had been recorded for it, matching the `--tmux`
+  precedent, but no such amendment actually existed in either doc at that
+  point. Caught at review by checking the claim against `git show`
+  rather than trusting the report; fixed for real in round 6, with the
+  amendment itself now stating plainly that the change doesn't belong to
+  this brief topically. Worth remembering: an implementer report is a
+  claim about the diff, not evidence of it, even when the claim is about
+  the implementer's own prior good behavior ("I did what I did last
+  time") — that's exactly the kind of claim that's easiest to write from
+  memory instead of re-checking.
+- **Real bug caught and fixed (round 6→7):** `--restore`'s interactive
+  picker had two prompt code paths (single restorable session vs.
+  multiple) that read input differently — only the multi-entry one
+  caught `Ctrl-C`/EOF, so cancelling at the common single-session `[Y/n]`
+  prompt crashed with a raw traceback. Fixed by factoring both through
+  one `_read_line()` helper so the two paths structurally can't diverge
+  on this again, rather than just patching the missing guard in place.

@@ -190,6 +190,22 @@ async def kill_session(session: str) -> None:
         pass
 
 
+async def rename_session(old: str, new: str) -> bool:
+    """Best-effort: a session name is cosmetic (nothing in this codebase
+    ever re-derives it - every lookup matches on ``@cs_*`` pane tags, not
+    the name), so a rename failing (e.g. ``new`` already taken by an
+    unrelated session) is never worth surfacing as an error. Returns
+    whether it actually happened.
+    """
+    if old == new:
+        return True
+    try:
+        await run("rename-session", "-t", old, new)
+        return True
+    except TmuxCommandError:
+        return False
+
+
 async def split_window(
     target: str, *, vertical: bool, session: str
 ) -> str:
