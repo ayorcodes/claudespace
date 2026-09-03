@@ -12,10 +12,12 @@ from claudespace.pipeline import (
     DOWNSTREAM_ROLES,
     PIPELINE,
     blocked_marker_path,
+    conductor_run_marker_path,
     done_marker_path,
     parse_blocked_marker,
     parse_done_marker,
     resolve_root,
+    session_marker_dir,
     think_marker_path,
     worktree_marker_path,
 )
@@ -153,3 +155,33 @@ def test_marker_path_builders_honor_a_worktree_marker(tmp_path):
         worktree / ".claudespace" / "planner.blocked"
     )
     assert worktree_marker_path(str(root)) == str(root / ".claudespace" / "worktree")
+
+
+def test_session_marker_dir_without_instance_is_byte_identical_to_flat_path():
+    assert session_marker_dir("/x", None) == "/x/.claudespace"
+    assert session_marker_dir("/x/", None) == "/x/.claudespace"
+    assert session_marker_dir("/x", "") == "/x/.claudespace"
+
+
+def test_session_marker_dir_with_instance_nests_under_s():
+    assert session_marker_dir("/x", "abc-123") == "/x/.claudespace/s/abc-123"
+
+
+def test_marker_path_builders_scope_under_instance():
+    assert done_marker_path("/x", "researcher", "id") == "/x/.claudespace/s/id/researcher.done"
+    assert blocked_marker_path("/x", "planner", "id") == "/x/.claudespace/s/id/planner.blocked"
+    assert think_marker_path("/x", "id") == "/x/.claudespace/s/id/think"
+    assert conductor_run_marker_path("/x", "id") == "/x/.claudespace/s/id/conductor-run"
+    assert worktree_marker_path("/x", "id") == "/x/.claudespace/s/id/worktree"
+
+
+def test_resolve_root_with_instance_reads_the_scoped_worktree_pointer(tmp_path):
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktrees" / "vat-exclusion"
+    (root / ".claudespace" / "s" / "id").mkdir(parents=True)
+    worktree.mkdir(parents=True)
+    (root / ".claudespace" / "s" / "id" / "worktree").write_text(str(worktree))
+
+    assert resolve_root(str(root), "id") == str(worktree)
+    # the unscoped, 1-arg form still reads only the flat pointer
+    assert resolve_root(str(root)) == str(root)

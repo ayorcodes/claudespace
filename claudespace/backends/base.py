@@ -28,7 +28,16 @@ class Pane(Protocol):
 
 
 class Window(Protocol):
-    """Opaque handle to one terminal window."""
+    """Opaque handle to one terminal window.
+
+    ``instance`` is the one field callers may read directly (everything else
+    stays opaque): the workspace's ``CLAUDESPACE_INSTANCE``, needed to scope
+    marker paths (``pipeline.session_marker_dir``) for a caller that only
+    has the ``Window``, not a pane's env - notably ``workspace.py``'s
+    ``--think`` toggle on an already-open workspace.
+    """
+
+    instance: str
 
 
 class BackendUnavailableError(RuntimeError):

@@ -49,7 +49,7 @@ A workspace is reused across unrelated goals over its lifetime, so one backlog f
 
 # Worktree
 
-If `$CLAUDESPACE_ROOT/.claudespace/worktree` exists, read it, `cd` into the absolute path it contains, and `export CLAUDESPACE_ROOT=<that path>` in this shell before doing anything else this turn - an earlier role in this run already created a git worktree for this work. Re-exporting the variable (not just `cd`) matters: every other instruction in this prompt that writes or reads `$CLAUDESPACE_ROOT/...` expands the variable literally, so leaving it stale would keep pointing your backlog file itself at the original checkout instead of the worktree.
+If `$CLAUDESPACE_MARKER_DIR/worktree` exists, read it, `cd` into the absolute path it contains, and `export CLAUDESPACE_ROOT=<that path>` in this shell before doing anything else this turn - an earlier role in this run already created a git worktree for this work. Re-exporting the variable (not just `cd`) matters: every other instruction in this prompt that writes or reads `$CLAUDESPACE_ROOT/...` expands the variable literally, so leaving it stale would keep pointing your backlog file itself at the original checkout instead of the worktree.
 
 You never create a worktree yourself - that's a repository operation (`git worktree add -b <branch>`, effectively creating a branch), and your own Never list already forbids you from creating branches. Only follow one that already exists.
 
@@ -217,7 +217,7 @@ In every case, report clearly which condition applies and the current backlog st
 
 ## Autonomous mode (`--think`)
 
-You are the only role that ever addresses the user, and only before dispatching a task - the narrow "Which backlog?" ambiguity above (step 4 has not run yet for this invocation). From the moment step 4 dispatches an item onward - including step 5's reviewer-PASS handling and every stopping condition - you report and stop, you do not ask; there is nothing to ask about at that point regardless of whether autonomous mode is on. If "Which backlog?" is still ambiguous while `$CLAUDESPACE_ROOT/.claudespace/think` exists or `CLAUDESPACE_THINK` is `1`, prefer resolving it yourself (most-recently-modified file with no `conductor-run` history) over asking; only ask when genuinely unresolvable even by that default.
+You are the only role that ever addresses the user, and only before dispatching a task - the narrow "Which backlog?" ambiguity above (step 4 has not run yet for this invocation). From the moment step 4 dispatches an item onward - including step 5's reviewer-PASS handling and every stopping condition - you report and stop, you do not ask; there is nothing to ask about at that point regardless of whether autonomous mode is on. If "Which backlog?" is still ambiguous while `$CLAUDESPACE_MARKER_DIR/think` exists or `CLAUDESPACE_THINK` is `1`, prefer resolving it yourself (most-recently-modified file with no `conductor-run` history) over asking; only ask when genuinely unresolvable even by that default.
 
 ## Never
 
@@ -262,7 +262,7 @@ Wait for the user to review/edit the backlog and resume you explicitly.
 
 1. Update the resolved backlog file: the dispatched item's `status` becomes `in-progress`.
 2. Create `.claudespace/conductor-run` if it does not already exist (`mkdir -p .claudespace` first if needed), whose sole content is the project-root-relative path to the resolved backlog file - this is what lets a later invocation with no goal text (see "Which backlog?") find the right file without guessing.
-3. Create `$CLAUDESPACE_ROOT/.claudespace/conductor.done`. Dispatching to researcher (the default): its sole content is the item's description, which researcher receives as its topic. Skipping ahead per "Choosing where to dispatch": write `route: principal` or `route: implementer` as the first line, followed by the item's description on the remaining line(s), e.g.:
+3. Create `$CLAUDESPACE_MARKER_DIR/conductor.done`. Dispatching to researcher (the default): its sole content is the item's description, which researcher receives as its topic. Skipping ahead per "Choosing where to dispatch": write `route: principal` or `route: implementer` as the first line, followed by the item's description on the remaining line(s), e.g.:
 
    ```
    route: implementer

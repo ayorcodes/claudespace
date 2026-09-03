@@ -66,6 +66,7 @@ import os
 from dataclasses import dataclass
 
 MARKER_DIR = ".claudespace"
+SESSION_DIR = "s"
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +198,22 @@ def parse_blocked_marker(content: str, *, stage: Stage) -> tuple[str | None, str
     return None, _normalize_artifact(content)
 
 
-def worktree_marker_path(root: str) -> str:
+def session_marker_dir(root: str, instance: str | None) -> str:
+    """The marker directory for ``root``, scoped to ``instance`` when given.
+
+    ``instance`` present -> ``<root>/.claudespace/s/<instance>``: two
+    sessions on the same repo get distinct subtrees, so their markers never
+    collide. ``instance is None`` -> ``<root>/.claudespace``, the flat
+    legacy path - the backward-compat fallback for panes launched before
+    this scoping existed (see ``resolve_root``'s docstring). A pure join:
+    never calls ``resolve_root`` itself, so callers control whether ``root``
+    is resolved first (see ``resolve_root`` vs. ``worktree_marker_path``).
+    """
+    base = f"{root.rstrip('/')}/{MARKER_DIR}"
+    return f"{base}/{SESSION_DIR}/{instance}" if instance else base
+
+
+def worktree_marker_path(root: str, instance: str | None = None) -> str:
     """Sentinel a role writes when it creates a run-scoped git worktree.
 
     Content is the worktree's absolute path. Every prompt is told (see each
@@ -205,11 +221,15 @@ def worktree_marker_path(root: str) -> str:
     ``cd`` into its contents before doing anything else, so ``resolve_root``
     below is what makes the rest of the pipeline's path handling honor that
     without every caller re-checking it by hand.
+
+    Keyed on the *unresolved* ``root`` (via ``session_marker_dir`` directly,
+    not through ``resolve_root``) - it's the thing resolution reads, so it
+    can't itself depend on resolution.
     """
-    return f"{root.rstrip('/')}/{MARKER_DIR}/worktree"
+    return f"{session_marker_dir(root, instance)}/worktree"
 
 
-def resolve_root(root: str) -> str:
+def resolve_root(root: str, instance: str | None = None) -> str:
     """The effective project root for ``root``'s workspace: the contents of
     its ``worktree`` marker if one exists and still points at a real
     directory, else ``root`` unchanged.
@@ -227,7 +247,7 @@ def resolve_root(root: str) -> str:
     every marker-path builder through this function means a worktree, once
     recorded, is honored everywhere without each caller re-checking it.
     """
-    pointer = worktree_marker_path(root)
+    pointer = worktree_marker_path(root, instance)
     if os.path.isfile(pointer):
         with open(pointer) as f:
             candidate = f.read().strip()
@@ -236,15 +256,15 @@ def resolve_root(root: str) -> str:
     return root
 
 
-def done_marker_path(root: str, role: str) -> str:
-    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/{role}.done"
+def done_marker_path(root: str, role: str, instance: str | None = None) -> str:
+    return f"{session_marker_dir(resolve_root(root, instance), instance)}/{role}.done"
 
 
-def blocked_marker_path(root: str, role: str) -> str:
-    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/{role}.blocked"
+def blocked_marker_path(root: str, role: str, instance: str | None = None) -> str:
+    return f"{session_marker_dir(resolve_root(root, instance), instance)}/{role}.blocked"
 
 
-def conductor_run_marker_path(root: str) -> str:
+def conductor_run_marker_path(root: str, instance: str | None = None) -> str:
     """Sentinel conductor writes when it dispatches its first backlog item.
 
     Reviewer checks its presence on PASS to decide between ``route:
@@ -253,17 +273,17 @@ def conductor_run_marker_path(root: str) -> str:
     from, read back on a goal-less invocation so it knows which file to
     resume. ``handoff.py`` only ever checks presence.
     """
-    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/conductor-run"
+    return f"{session_marker_dir(resolve_root(root, instance), instance)}/conductor-run"
 
 
-def think_marker_path(root: str) -> str:
+def think_marker_path(root: str, instance: str | None = None) -> str:
     """Sentinel written by ``claudespace --think``, removed by a run without it.
 
     Marks the workspace autonomous: roles that would stop to ask the user
     decide themselves and record the decision in their artifact. Only
     presence is checked.
     """
-    return f"{resolve_root(root).rstrip('/')}/{MARKER_DIR}/think"
+    return f"{session_marker_dir(resolve_root(root, instance), instance)}/think"
 
 
 # Panes that accumulate per-feature context and need clearing when a fresh

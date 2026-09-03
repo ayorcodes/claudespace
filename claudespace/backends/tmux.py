@@ -147,6 +147,7 @@ class TmuxWindow:
     build_workspace hands back and activate_window brings to front"."""
 
     session: str
+    instance: str
 
 
 class TmuxBackend(TerminalBackend):
@@ -366,7 +367,7 @@ class TmuxBackend(TerminalBackend):
                 max_items=max_items,
             )
             await self._prefill_role_command(entry_pane_cfg.role, root_pane)
-            return TmuxWindow(session=session)
+            return TmuxWindow(session=session, instance=instance)
 
         layout = get_layout(template.layout)
         configured_roles = {pane.role for pane in template.panes}
@@ -395,7 +396,7 @@ class TmuxBackend(TerminalBackend):
         for pane_cfg in template.panes:
             await self._prefill_role_command(pane_cfg.role, panes_by_role[pane_cfg.role])
 
-        return TmuxWindow(session=session)
+        return TmuxWindow(session=session, instance=instance)
 
     # -- lookups ---------------------------------------------------------------
 
@@ -445,7 +446,9 @@ class TmuxBackend(TerminalBackend):
         rows = await self._matching_rows(marker, None)
         if not rows:
             return None
-        return TmuxWindow(session=rows[0]["session_name"])
+        return TmuxWindow(
+            session=rows[0]["session_name"], instance=rows[0].get("@cs_instance", "")
+        )
 
     async def list_all_workspaces(self) -> list[dict[str, Any]]:
         """Every claudespace-tagged session currently known to this
@@ -697,7 +700,7 @@ class TmuxBackend(TerminalBackend):
             pane_cfg=pane_cfg,
             auto_handoff=auto_handoff,
             lazy=True,
-            think=os.path.isfile(think_marker_path(root)),
+            think=os.path.isfile(think_marker_path(root, instance)),
             max_items=DEFAULT_MAX_ITEMS,
         )
         return new_pane

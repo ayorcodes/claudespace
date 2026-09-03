@@ -181,7 +181,9 @@ def _print_handoff_error_block(role: str, error: BaseException) -> None:
     )
 
 
-def _maybe_nag_after_handoff_error(root: str | None, role: str) -> bool:
+def _maybe_nag_after_handoff_error(
+    root: str | None, role: str, instance: str | None
+) -> bool:
     """Filesystem-only, backend-free fallback check run from ``main``'s
     exception handler when ``_run`` (the normal handoff/nag path) itself
     raised. Deliberately makes no backend API calls - the whole point is to
@@ -203,8 +205,8 @@ def _maybe_nag_after_handoff_error(root: str | None, role: str) -> bool:
     stage = PIPELINE.get(role)
     if stage is None or stage.next_role is None:
         return False
-    done_path = done_marker_path(root, role)
-    blocked_path = blocked_marker_path(root, role)
+    done_path = done_marker_path(root, role, instance)
+    blocked_path = blocked_marker_path(root, role, instance)
     if _read_fresh_marker(done_path) or (
         stage.bounce_to and _read_fresh_marker(blocked_path)
     ):
@@ -227,7 +229,7 @@ async def _old_run_finished(
     """
     if run_started is None:
         return True
-    done_path = done_marker_path(root, "reviewer")
+    done_path = done_marker_path(root, "reviewer", instance)
     if not os.path.isfile(done_path):
         return False
     return os.path.getmtime(done_path) >= run_started
@@ -384,8 +386,8 @@ async def _send_handoff(
         logger.debug("Unknown role '%s' - nothing to hand off", role)
         return False
 
-    blocked_path = blocked_marker_path(root, role)
-    done_path = done_marker_path(root, role)
+    blocked_path = blocked_marker_path(root, role, instance)
+    done_path = done_marker_path(root, role, instance)
 
     raw_blocked_content = stage.bounce_to and _read_fresh_marker(blocked_path)
     # A `.done` marker can route to `next_role` OR any `alt_next_roles`
@@ -444,7 +446,7 @@ async def _send_handoff(
             # run outside a conductor run keeps the in-flight check and its
             # "this will discard that context" warning.
             conductor_driven = role == "conductor" or os.path.isfile(
-                conductor_run_marker_path(root)
+                conductor_run_marker_path(root, instance)
             )
             new_topic_warning = await _handle_new_topic(
                 backend,
@@ -547,19 +549,30 @@ async def _maybe_nag_missing_marker(
     Fires at most once per missing-marker streak; ``_send_handoff`` clears
     the nag flag as soon as a real marker shows up, so a role that's
     genuinely stuck (e.g. waiting on the user) isn't nagged forever.
+
+    ``.nagged`` is additionally scoped to the current *run* by mtime, not
+    just presence: consecutive backlog items in one conductor run share a
+    single instance and therefore a single scoped marker dir, so a leftover
+    ``.nagged`` from an earlier item is otherwise indistinguishable from a
+    fresh one for the item now in flight - the motivating stale-nag bug.
+    A ``.nagged`` older than ``run_started`` is a leftover: cleared here so
+    the nag fires again for this item, mirroring ``_old_run_finished``'s own
+    mtime comparison. ``run_started is None`` (no run doc recorded yet) is
+    treated as "still valid" - same as ``_old_run_finished`` - to avoid a
+    spurious nag before a run is even recorded.
     """
     stage = PIPELINE.get(role)
     if stage is None:
         return False
 
     conductor_driven_reviewer = role == "reviewer" and os.path.isfile(
-        conductor_run_marker_path(root)
+        conductor_run_marker_path(root, instance)
     )
     if stage.next_role is None and not conductor_driven_reviewer:
         return False
 
-    done_path = done_marker_path(root, role)
-    blocked_path = blocked_marker_path(root, role)
+    done_path = done_marker_path(root, role, instance)
+    blocked_path = blocked_marker_path(root, role, instance)
 
     if _read_fresh_marker(done_path) or (
         stage.bounce_to and _read_fresh_marker(blocked_path)
@@ -567,7 +580,10 @@ async def _maybe_nag_missing_marker(
         return False
 
     if _already_nagged(done_path):
-        return False
+        _, run_started = await backend.get_run_doc(marker=root, instance=instance)
+        if run_started is None or os.path.getmtime(done_path + NAG_STATE_SUFFIX) >= run_started:
+            return False
+        _clear_nag(done_path)
 
     if not await backend.get_auto_handoff(marker=root, instance=instance):
         return False
@@ -618,7 +634,7 @@ def main() -> None:
         # off" - that's indistinguishable from success to both the model
         # and the user, since this stderr log isn't surfaced anywhere. See
         # _maybe_nag_after_handoff_error and _print_handoff_error_block.
-        if _maybe_nag_after_handoff_error(root, role):
+        if _maybe_nag_after_handoff_error(root, role, instance):
             _print_handoff_error_block(role, exc)
         sys.exit(0)
 

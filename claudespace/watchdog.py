@@ -35,7 +35,7 @@ import time
 from typing import Any
 
 from claudespace.backends.base import TerminalBackend
-from claudespace.pipeline import MARKER_DIR
+from claudespace.pipeline import resolve_root, session_marker_dir
 
 logger = logging.getLogger(__name__)
 
@@ -56,19 +56,20 @@ def _notify(title: str, message: str) -> None:
         logger.warning("Failed to send stall notification (non-fatal)", exc_info=True)
 
 
-def _stall_marker_path(root: str, role: str) -> str:
-    return f"{root.rstrip('/')}/{MARKER_DIR}/{role}.stalled"
+def _stall_marker_path(root: str, role: str, instance: str | None) -> str:
+    return f"{session_marker_dir(resolve_root(root, instance), instance)}/{role}.stalled"
 
 
-def _write_stall_marker(root: str, role: str) -> None:
-    os.makedirs(f"{root.rstrip('/')}/{MARKER_DIR}", exist_ok=True)
-    with open(_stall_marker_path(root, role), "w", encoding="utf-8") as handle:
+def _write_stall_marker(root: str, role: str, instance: str | None) -> None:
+    marker_dir = session_marker_dir(resolve_root(root, instance), instance)
+    os.makedirs(marker_dir, exist_ok=True)
+    with open(_stall_marker_path(root, role, instance), "w", encoding="utf-8") as handle:
         handle.write(f"{time.time()}\n")
 
 
-def _clear_stall_marker(root: str, role: str) -> None:
+def _clear_stall_marker(root: str, role: str, instance: str | None) -> None:
     try:
-        os.remove(_stall_marker_path(root, role))
+        os.remove(_stall_marker_path(root, role, instance))
     except FileNotFoundError:
         return
 
@@ -96,7 +97,7 @@ async def _check_once(
         last_seen[role] = new_state
 
         if not is_stalled:
-            _clear_stall_marker(root, role)
+            _clear_stall_marker(root, role, instance)
             continue
 
         logger.warning(
@@ -104,9 +105,9 @@ async def _check_once(
             "%s for details",
             role,
             root,
-            _stall_marker_path(root, role),
+            _stall_marker_path(root, role, instance),
         )
-        _write_stall_marker(root, role)
+        _write_stall_marker(root, role, instance)
         _notify(
             "claudespace: possible stall",
             f"'{role}' pane in {root} looks stalled or has crashed.",

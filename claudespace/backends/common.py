@@ -13,7 +13,7 @@ import shlex
 from typing import Any
 
 from claudespace.assets_sync import PROMPTS_DEST
-from claudespace.pipeline import resolve_root
+from claudespace.pipeline import resolve_root, session_marker_dir
 
 # Printed by claude's input box once its TUI accepts text. Both backends can
 # read this: iTerm2 via its screen-content API, tmux via `capture-pane`.
@@ -124,7 +124,11 @@ def launch_command_text(
     environment can't drift between them. ``root`` is the workspace's
     original launch root; ``resolve_root`` follows a run-scoped worktree
     marker if one has been created since, same as every other marker-path
-    lookup in the codebase.
+    lookup in the codebase. ``CLAUDESPACE_MARKER_DIR`` is exported so a
+    pane's own prompt-driven writes (``mkdir -p $CLAUDESPACE_MARKER_DIR``,
+    then ``.done``/``.blocked``/etc under it) land in the same per-session
+    subtree ``pipeline.py``'s builders compute from ``(root, instance)`` -
+    see ``session_marker_dir``.
 
     ``CLAUDESPACE_TERMINAL=<backend_name>`` matters more than it looks:
     ``claudespace-handoff``/``claudespace-msg`` run as their *own* process
@@ -139,11 +143,13 @@ def launch_command_text(
     anything a Stop hook's caller would see - a handoff that looks like it
     just does nothing.
     """
-    effective_root = resolve_root(root)
+    effective_root = resolve_root(root, instance)
+    marker_dir = session_marker_dir(effective_root, instance)
     return (
         f"cd {effective_root} && export CLAUDESPACE_ROOT={effective_root} && "
         f"export CLAUDESPACE_ROLE={role} && "
         f"export CLAUDESPACE_INSTANCE={instance} && "
+        f"export CLAUDESPACE_MARKER_DIR={marker_dir} && "
         f"export CLAUDESPACE_MAX_ITEMS={max_items} && "
         f"export CLAUDESPACE_THINK={int(think)} && "
         f"export CLAUDESPACE_TERMINAL={backend_name} && {banner}{command}\n"
