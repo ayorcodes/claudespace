@@ -33,6 +33,7 @@ import time
 from importlib import resources
 from pathlib import Path
 
+from claudespace import __version__
 from claudespace.config import (
     USER_TEMPLATES_PATH,
     ensure_agentic_template_seeded,
@@ -46,6 +47,11 @@ DEFAULT_CONFIG_DIR = Path.home() / ".claude"
 COMMANDS_DEST = DEFAULT_CONFIG_DIR / "commands"
 PROMPTS_DEST = Path.home() / ".ai" / "prompts"
 SETTINGS_DEST = DEFAULT_CONFIG_DIR / "settings.json"
+
+# Where the first-run sync sentinel lives (AD5) - one file per version, so an
+# upgrade (either channel) re-triggers a sync on the next real invocation
+# instead of needing its own explicit sync call.
+SYNC_SENTINEL_DIR = Path.home() / ".config" / "claudespace"
 
 HANDOFF_HOOK_COMMAND = "claudespace-handoff"
 LEGACY_HANDOFF_HOOK_COMMAND = "claudespace:handoff"
@@ -402,6 +408,31 @@ def sync_assets() -> None:
         logger.info("Seeded 'native' template in %s", USER_TEMPLATES_PATH)
     if agentic_seeded:
         logger.info("Seeded 'agentic' template in %s", USER_TEMPLATES_PATH)
+
+
+def _sync_sentinel_path(version: str = __version__) -> Path:
+    return SYNC_SENTINEL_DIR / f".asset-sync-{version}"
+
+
+def sync_if_needed(version: str = __version__) -> bool:
+    """Run ``sync_assets()`` once per version (AD5).
+
+    Both the npm and pipx channels now trigger asset sync the same way: from
+    ``cli.main()`` on the first real invocation after install or upgrade,
+    rather than from the installer/postinstall (D4 - postinstall may run as
+    root, and this must run as the user). Guarded by a per-version sentinel
+    file rather than a per-install one, so bumping the version re-syncs on
+    the next invocation regardless of channel. Returns whether sync actually
+    ran. A failed sync does not write the sentinel, so the next invocation
+    retries rather than silently staying out of date.
+    """
+    sentinel = _sync_sentinel_path(version)
+    if sentinel.exists():
+        return False
+    sync_assets()
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("")
+    return True
 
 
 def main() -> None:

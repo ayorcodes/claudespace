@@ -451,6 +451,9 @@ def main() -> None:
         update.run_update()
         return
 
+    if args.command != "uninstall":
+        assets_sync.sync_if_needed()
+
     if args.command == "doctor":
         ok = environment.run_doctor_checks(
             iterm_was_running=utils.is_iterm_running(),

@@ -1,0 +1,23 @@
+# The npm tarball ships the Python package (claudespace/, including its
+# bundled assets), the bin/ shims, the provisioning scripts, and the
+# packaging metadata pip needs to build a wheel from it. Everything else -
+# tests, docs, the pipx installer, build artifacts - is excluded (AD1).
+
+tests/
+docs/
+.github/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+.venv/
+.venv-test/
+.pytest_cache/
+.ruff_cache/
+.claudespace/
+
+install.sh
+uv.lock
+*.png
+CLAUDE.md

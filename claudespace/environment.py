@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 
+from claudespace import channel as channel_module
 from claudespace import utils
 from claudespace.backends import tmux_cli
 from claudespace.config import load_tmux_viewer
@@ -348,6 +349,26 @@ def detect_usable_backends() -> list[str]:
     return usable
 
 
+def _warn_competing_installs() -> None:
+    """Warn (never fail) when both a pipx and an npm claudespace are on PATH
+    (D6). Updating only the one that wins PATH resolution leaves the other
+    stale and shadowed, so name both explicitly.
+    """
+    installs = channel_module.competing_installs()
+    if len(installs) < 2:
+        return
+    winner = installs[0]
+    others = ", ".join(f"{c.name} ({c.binary_path})" for c in installs[1:])
+    logger.warning(
+        "Multiple claudespace installs found on PATH: %s is used "
+        "('claudespace update' will update this one); shadowed: %s. Remove "
+        "the one you don't want (pipx: 'pipx uninstall claudespace'; npm: "
+        "'claudespace uninstall' then 'npm rm -g @ayorcodes/claudespace').",
+        f"{winner.name} ({winner.binary_path})",
+        others,
+    )
+
+
 def run_doctor_checks(
     *, iterm_was_running: bool, assume_yes: bool = False, launch: bool = True
 ) -> bool:
@@ -362,6 +383,8 @@ def run_doctor_checks(
     """
     require_macos()
     ok = True
+
+    _warn_competing_installs()
 
     if not is_claude_installed():
         logger.error(

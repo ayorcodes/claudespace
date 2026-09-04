@@ -264,3 +264,56 @@ class TestRunDoctorChecks:
     def test_claude_missing_returns_false(self, monkeypatch):
         self._patch(monkeypatch, claude_installed=False)
         assert environment.run_doctor_checks(iterm_was_running=False) is False
+
+
+class TestCompetingInstallsWarning:
+    """D6: doctor warns (never fails) when both a pipx and an npm
+    claudespace are found on PATH.
+    """
+
+    def _patch(self, monkeypatch, *, installs):
+        monkeypatch.setattr(environment, "require_macos", lambda: None)
+        monkeypatch.setattr(environment, "is_claude_installed", lambda: True)
+        monkeypatch.setattr(environment, "detect_usable_backends", lambda: ["iterm2"])
+        monkeypatch.setattr(environment, "is_iterm_installed", lambda: True)
+        monkeypatch.setattr(
+            environment, "_ensure_api_enabled", lambda *, iterm_was_running, launch: True
+        )
+        monkeypatch.setattr(
+            environment.channel_module, "competing_installs", lambda: installs
+        )
+
+    def test_warns_and_names_both_when_two_are_found(self, monkeypatch, caplog):
+        installs = [
+            environment.channel_module.Channel("npm", "/usr/local/bin/claudespace"),
+            environment.channel_module.Channel(
+                "pipx", "/Users/x/.local/bin/claudespace"
+            ),
+        ]
+        self._patch(monkeypatch, installs=installs)
+        caplog.set_level("WARNING")
+        assert environment.run_doctor_checks(iterm_was_running=False) is True
+        assert "Multiple claudespace installs found" in caplog.text
+        assert "/usr/local/bin/claudespace" in caplog.text
+        assert "/Users/x/.local/bin/claudespace" in caplog.text
+
+    def test_no_warning_and_ok_when_one_install_found(self, monkeypatch, caplog):
+        installs = [environment.channel_module.Channel("npm", "/usr/local/bin/claudespace")]
+        self._patch(monkeypatch, installs=installs)
+        caplog.set_level("WARNING")
+        assert environment.run_doctor_checks(iterm_was_running=False) is True
+        assert "Multiple claudespace installs found" not in caplog.text
+
+    def test_no_warning_when_none_found(self, monkeypatch, caplog):
+        self._patch(monkeypatch, installs=[])
+        caplog.set_level("WARNING")
+        assert environment.run_doctor_checks(iterm_was_running=False) is True
+        assert "Multiple claudespace installs found" not in caplog.text
+
+    def test_exit_code_unaffected_by_the_warning(self, monkeypatch):
+        installs = [
+            environment.channel_module.Channel("npm", "/a/claudespace"),
+            environment.channel_module.Channel("pipx", "/b/claudespace"),
+        ]
+        self._patch(monkeypatch, installs=installs)
+        assert environment.run_doctor_checks(iterm_was_running=False) is True
