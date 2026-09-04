@@ -353,26 +353,21 @@ async def _launch_pane(
 async def _wait_for_current_session(
     window: "iterm2.Window", *, timeout: float = 5.0
 ) -> "iterm2.Session":
-    """Poll until iTerm2's App state catches up with a just-created window
-    and return its current session.
+    """Return the session from a just-created window.
 
-    Both ``current_tab`` and ``tab.current_session`` can legitimately be
-    ``None`` right after ``Window.async_create`` - the App's live state is
-    updated by a separate async notification stream that lags behind the
-    creation RPC's response. Poll until a non-None session is available,
-    falling back to ``window.tabs[0]`` when ``current_tab`` hasn't resolved
-    but the tabs list is already populated.
+    ``current_tab`` and ``tab.current_session`` match against
+    ``selected_tab_id`` / ``active_session_id`` which start as ``None``
+    and are populated later by the notification stream.  The underlying
+    lists (``window.tabs``, ``tab.sessions``) *are* populated from the
+    RPC response in ``create_from_proto``, so access those directly
+    instead of polling for the notification stream to catch up.
     """
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
-        tab = window.current_tab
-        if tab is None and window.tabs:
-            tab = window.tabs[0]
-        if tab is not None:
-            session = tab.current_session
-            if session is not None:
-                return session
+        for tab in window.tabs:
+            if tab.sessions:
+                return tab.sessions[0]
         await asyncio.sleep(0.05)
     raise RuntimeError("Timed out waiting for the new iTerm2 window's session to appear")
 
