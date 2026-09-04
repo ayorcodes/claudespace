@@ -141,7 +141,7 @@ def main() -> None:
     args = parser.parse_args()
 
     sender_role = os.environ.get("CLAUDESPACE_ROLE")
-    root = os.environ.get("CLAUDESPACE_ROOT")
+    root = os.environ.get("CLAUDESPACE_ORIGIN_ROOT") or os.environ.get("CLAUDESPACE_ROOT")
     instance = os.environ.get("CLAUDESPACE_INSTANCE")
     if not sender_role or not root:
         print(

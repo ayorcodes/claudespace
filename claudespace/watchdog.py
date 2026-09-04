@@ -50,7 +50,7 @@ from typing import Any
 from claudespace.backends.base import TerminalBackend
 from claudespace.backends.common import idle_completion_decision
 from claudespace.handoff import has_unhanded_forward_work
-from claudespace.pipeline import resolve_root, session_marker_dir
+from claudespace.pipeline import session_marker_dir
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +64,12 @@ DEFAULT_IDLE_AFTER_SECONDS = DEFAULT_STALL_AFTER_SECONDS
 
 def _marker_path(root: str, role: str, instance: str | None, suffix: str) -> str:
     return (
-        f"{session_marker_dir(resolve_root(root, instance), instance)}/{role}.{suffix}"
+        f"{session_marker_dir(root, instance)}/{role}.{suffix}"
     )
 
 
 def _write_marker(root: str, role: str, instance: str | None, suffix: str) -> None:
-    marker_dir = session_marker_dir(resolve_root(root, instance), instance)
+    marker_dir = session_marker_dir(root, instance)
     os.makedirs(marker_dir, exist_ok=True)
     with open(_marker_path(root, role, instance, suffix), "w", encoding="utf-8") as handle:
         handle.write(f"{time.time()}\n")

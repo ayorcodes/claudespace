@@ -818,11 +818,18 @@ def main() -> None:
     before this variable existed won't have it exported; falling back to
     ``None`` degrades to the old root-only matching for them rather than
     refusing to hand off at all.
+
+    ``CLAUDESPACE_ORIGIN_ROOT`` (the original, unresolved project root) is
+    used for all marker-path lookups and backend pane matching, so markers
+    written before a worktree existed (e.g. ``conductor-run``) remain
+    visible even after a role re-exports ``CLAUDESPACE_ROOT`` to point at
+    the worktree. Falls back to ``CLAUDESPACE_ROOT`` for panes launched
+    before ``CLAUDESPACE_ORIGIN_ROOT`` was introduced.
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     role = os.environ.get("CLAUDESPACE_ROLE")
-    root = os.environ.get("CLAUDESPACE_ROOT")
+    root = os.environ.get("CLAUDESPACE_ORIGIN_ROOT") or os.environ.get("CLAUDESPACE_ROOT")
     instance = os.environ.get("CLAUDESPACE_INSTANCE")
     if not role or not root:
         return

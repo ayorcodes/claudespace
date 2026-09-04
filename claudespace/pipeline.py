@@ -234,18 +234,13 @@ def resolve_root(root: str, instance: str | None = None) -> str:
     its ``worktree`` marker if one exists and still points at a real
     directory, else ``root`` unchanged.
 
-    ``CLAUDESPACE_ROOT`` (what every pane's env var and every caller in this
-    module is handed) is fixed at workspace-creation time and never changes
-    for the life of the workspace - but a role can be told mid-run to do its
-    work in a freshly created git worktree (see the "Worktree" section now
-    in every ``*.prompt.md``), which lives at a different path on disk.
-    Without this indirection, a role that ``cd``'d into that worktree writes
-    its markers and artifacts there while every path this module builds
-    still points at the original ``CLAUDESPACE_ROOT`` - the exact drift that
-    left a downstream role unable to find a researcher's brief after a
-    worktree-scoped run (docs/research/2026-08-29-vat-exclusion...). Routing
-    every marker-path builder through this function means a worktree, once
-    recorded, is honored everywhere without each caller re-checking it.
+    Used by ``launch_command_text`` to set the pane's ``cd`` target and
+    ``CLAUDESPACE_ROOT`` so code work happens in the worktree. **Not** used
+    by marker-path builders (``done_marker_path`` etc.) - markers are always
+    anchored at the original (unresolved) root so that pipeline state
+    written before a worktree exists (e.g. ``conductor-run``) remains
+    visible to every role regardless of whether a worktree was created
+    mid-run.
     """
     pointer = worktree_marker_path(root, instance)
     if os.path.isfile(pointer):
@@ -257,11 +252,11 @@ def resolve_root(root: str, instance: str | None = None) -> str:
 
 
 def done_marker_path(root: str, role: str, instance: str | None = None) -> str:
-    return f"{session_marker_dir(resolve_root(root, instance), instance)}/{role}.done"
+    return f"{session_marker_dir(root, instance)}/{role}.done"
 
 
 def blocked_marker_path(root: str, role: str, instance: str | None = None) -> str:
-    return f"{session_marker_dir(resolve_root(root, instance), instance)}/{role}.blocked"
+    return f"{session_marker_dir(root, instance)}/{role}.blocked"
 
 
 def conductor_run_marker_path(root: str, instance: str | None = None) -> str:
@@ -273,7 +268,7 @@ def conductor_run_marker_path(root: str, instance: str | None = None) -> str:
     from, read back on a goal-less invocation so it knows which file to
     resume. ``handoff.py`` only ever checks presence.
     """
-    return f"{session_marker_dir(resolve_root(root, instance), instance)}/conductor-run"
+    return f"{session_marker_dir(root, instance)}/conductor-run"
 
 
 def think_marker_path(root: str, instance: str | None = None) -> str:
@@ -283,7 +278,7 @@ def think_marker_path(root: str, instance: str | None = None) -> str:
     decide themselves and record the decision in their artifact. Only
     presence is checked.
     """
-    return f"{session_marker_dir(resolve_root(root, instance), instance)}/think"
+    return f"{session_marker_dir(root, instance)}/think"
 
 
 def think_active(root: str, instance: str | None = None) -> bool:

@@ -142,19 +142,21 @@ def test_resolve_root_ignores_a_worktree_marker_pointing_nowhere(tmp_path):
     assert resolve_root(str(root)) == str(root)
 
 
-def test_marker_path_builders_honor_a_worktree_marker(tmp_path):
+def test_marker_path_builders_stay_at_original_root_with_worktree(tmp_path):
     root = tmp_path / "main"
     worktree = tmp_path / "worktrees" / "vat-exclusion"
     (root / ".claudespace").mkdir(parents=True)
     worktree.mkdir(parents=True)
     (root / ".claudespace" / "worktree").write_text(str(worktree))
 
+    # Marker paths stay at the original root, not the worktree
     assert done_marker_path(str(root), "researcher") == str(
-        worktree / ".claudespace" / "researcher.done"
+        root / ".claudespace" / "researcher.done"
     )
     assert blocked_marker_path(str(root), "planner") == str(
-        worktree / ".claudespace" / "planner.blocked"
+        root / ".claudespace" / "planner.blocked"
     )
+    # worktree_marker_path always uses the unresolved root (unchanged)
     assert worktree_marker_path(str(root)) == str(root / ".claudespace" / "worktree")
 
 
