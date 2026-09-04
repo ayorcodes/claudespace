@@ -371,6 +371,10 @@ async def _wait_for_current_session(
         tab = window.current_tab
         if tab is not None:
             return tab.current_session
+        # current_tab can stay None even when the tab list is populated
+        # (notification stream lag); fall back to the tabs list directly.
+        if window.tabs:
+            return window.tabs[0].current_session
         await asyncio.sleep(0.05)
     raise RuntimeError("Timed out waiting for the new iTerm2 window's tab to appear")
 
