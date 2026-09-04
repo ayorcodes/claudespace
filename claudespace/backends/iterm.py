@@ -353,30 +353,24 @@ async def _launch_pane(
 async def _wait_for_current_session(
     window: "iterm2.Window", *, timeout: float = 5.0
 ) -> "iterm2.Session":
-    """Poll ``window.current_tab`` until iTerm2's App state catches up with
-    a just-created window, then return its current session.
+    """Return the session from a just-created window.
 
-    ``Window.async_create`` can return a ``Window`` whose tab list hasn't
-    caught up yet - ``current_tab`` legitimately returns ``None`` right
-    after creation (see its own docstring: "or ``None`` if it could not be
-    determined"), since the App's live state is updated by a separate
-    async notification stream that can lag slightly behind the creation
-    RPC's response. Racing straight into ``.current_session`` on that
-    ``None`` crashes with an ``AttributeError``; poll briefly instead of
-    failing on the very first check.
+    ``current_tab`` and ``tab.current_session`` match against
+    ``selected_tab_id`` / ``active_session_id`` which are initialized to
+    ``None`` and only populated later by the notification stream — they
+    never resolve for a window whose first notification hasn't arrived.
+    The underlying lists (``window.tabs``, ``tab.sessions``) *are*
+    populated from the RPC response in ``create_from_proto``, so access
+    those directly.
     """
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
-        tab = window.current_tab
-        if tab is not None:
-            return tab.current_session
-        # current_tab can stay None even when the tab list is populated
-        # (notification stream lag); fall back to the tabs list directly.
-        if window.tabs:
-            return window.tabs[0].current_session
+        for tab in window.tabs:
+            if tab.sessions:
+                return tab.sessions[0]
         await asyncio.sleep(0.05)
-    raise RuntimeError("Timed out waiting for the new iTerm2 window's tab to appear")
+    raise RuntimeError("Timed out waiting for the new iTerm2 window's session to appear")
 
 
 async def _close_window_if_empty(window: "iterm2.Window") -> None:
