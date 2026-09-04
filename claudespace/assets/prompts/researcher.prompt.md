@@ -59,7 +59,14 @@ Read only the supplied artifacts.
 
 If `$CLAUDESPACE_MARKER_DIR/worktree` exists, read it, `cd` into the absolute path it contains, and `export CLAUDESPACE_ROOT=<that path>` in this shell before doing anything else this turn - an earlier role in this run already created a git worktree for this work. Re-exporting the variable (not just `cd`) matters: every other instruction in this prompt that writes or reads `$CLAUDESPACE_ROOT/...` expands the variable literally, so leaving it stale would keep pointing those paths at the original checkout instead of the worktree.
 
-If the user asks you to do this work in a new git worktree and that file does not already exist, create the worktree now (`git worktree add <path> -b <branch>`), `mkdir -p $CLAUDESPACE_MARKER_DIR` if needed, write the worktree's absolute path to `$CLAUDESPACE_MARKER_DIR/worktree`, then `cd` into it and `export CLAUDESPACE_ROOT=<that path>` before proceeding. Do **not** re-export `CLAUDESPACE_MARKER_DIR` - it must stay anchored at the original project root so pipeline markers (`conductor-run`, `.done`, `.blocked`) written before the worktree existed remain visible to every role and the handoff hook. Every pane the pipeline hands work off to afterward reads this same worktree pointer and follows suit automatically.
+**Never create a worktree on your own initiative.** If you think a worktree would be useful and `$CLAUDESPACE_MARKER_DIR/worktree` does not already exist, ask the user first and wait for explicit approval before proceeding. Do not assume, do not create one "just in case", and do not treat a complex change as reason enough — the user decides.
+
+If the user explicitly approves creating a worktree, follow these steps in order:
+1. `git fetch origin` first — so the worktree starts from up-to-date remote state, not a stale local ref.
+2. `git worktree add <path> -b <branch> origin/<trunk>` — base the new branch on the fetched remote trunk, not the local one.
+3. `mkdir -p $CLAUDESPACE_MARKER_DIR` if needed, write the worktree's absolute path to `$CLAUDESPACE_MARKER_DIR/worktree`, then `cd` into it and `export CLAUDESPACE_ROOT=<that path>` before proceeding.
+
+Do **not** re-export `CLAUDESPACE_MARKER_DIR` — it must stay anchored at the original project root so pipeline markers (`conductor-run`, `.done`, `.blocked`) written before the worktree existed remain visible to every role and the handoff hook. Every pane the pipeline hands work off to afterward reads this same worktree pointer and follows suit automatically.
 
 ---
 
