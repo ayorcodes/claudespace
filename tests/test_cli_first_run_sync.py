@@ -95,3 +95,21 @@ class TestMainTriggersFirstRunSync:
         monkeypatch.setattr(sys, "argv", ["claudespace", "update"])
         cli.main()
         assert calls == []
+
+    def test_claudespace_skip_asset_sync_env_var_skips_doctors_sync(
+        self, monkeypatch
+    ):
+        """postinstall's D7 preflight (``scripts/postinstall.js``) invokes
+        ``claudespace doctor`` as a real subprocess of ``npm install -g``,
+        which may run as root under ``sudo`` (D4). That call sets this env
+        var precisely so it never reaches ``sync_if_needed()`` - only a
+        user's own later invocation, which never sets it, does.
+        """
+        _patch_main_dependencies(monkeypatch)
+        calls = []
+        monkeypatch.setattr(assets_sync, "sync_if_needed", lambda: calls.append(True))
+        monkeypatch.setenv("CLAUDESPACE_SKIP_ASSET_SYNC", "1")
+        monkeypatch.setattr(sys, "argv", ["claudespace", "doctor"])
+        with pytest.raises(SystemExit):
+            cli.main()
+        assert calls == []

@@ -451,7 +451,16 @@ def main() -> None:
         update.run_update()
         return
 
-    if args.command != "uninstall":
+    # ``CLAUDESPACE_SKIP_ASSET_SYNC`` is set only by npm's postinstall
+    # (scripts/postinstall.js) around its D7 preflight `doctor` call - that
+    # invocation runs as part of `npm install -g` (possibly as root under
+    # `sudo`), and sync must not reach `~/.claude`/`~/.ai` from there (D4).
+    # A user's own later `doctor`/launch never sets this, so the guarded
+    # first-run sync still fires on the first real invocation, for both
+    # channels (AD5).
+    if args.command != "uninstall" and not os.environ.get(
+        "CLAUDESPACE_SKIP_ASSET_SYNC"
+    ):
         assets_sync.sync_if_needed()
 
     if args.command == "doctor":

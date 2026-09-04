@@ -9,12 +9,27 @@
  */
 
 const { execFileSync, spawnSync } = require("child_process");
+const fs = require("fs");
 const path = require("path");
 
 const { provision } = require("./provision.js");
 
 const PKG_ROOT = path.resolve(__dirname, "..");
 const PACKAGE_NAME = require("../package.json").name;
+
+// Resolves symlinks where possible (e.g. macOS's /tmp -> /private/tmp, or a
+// symlinked nvm/Homebrew prefix) so the containment check below compares
+// real paths rather than tripping over a cosmetic symlink difference
+// between otherwise-identical locations. Falls back to a plain
+// normalization when the path can't be resolved (shouldn't happen for
+// either input here, but this must never throw).
+function realOrResolved(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
 
 function npmGlobalRoot() {
   if (process.env.npm_config_prefix) {
@@ -38,8 +53,12 @@ function assertGlobalInstall() {
     // fails to resolve on PATH.
     return;
   }
-  const resolvedGlobalRoot = path.resolve(globalRoot);
-  const resolvedPkgRoot = path.resolve(PKG_ROOT);
+  // The global root directory (<prefix>/lib/node_modules) may not exist yet
+  // on a from-scratch prefix - realpath that case falls back to a plain
+  // resolve via realOrResolved, which is fine: it still compares correctly
+  // against PKG_ROOT, which always exists (it contains this very script).
+  const resolvedGlobalRoot = realOrResolved(globalRoot);
+  const resolvedPkgRoot = realOrResolved(PKG_ROOT);
   if (
     resolvedPkgRoot === resolvedGlobalRoot ||
     resolvedPkgRoot.startsWith(resolvedGlobalRoot + path.sep)
@@ -59,6 +78,11 @@ function preflightDarwin() {
   const venvClaudespace = path.join(PKG_ROOT, ".venv", "bin", "claudespace");
   const result = spawnSync(venvClaudespace, ["doctor", "--yes", "--no-launch"], {
     stdio: "inherit",
+    // postinstall may run as root under `sudo npm i -g` (D4) - this must
+    // not trigger the first-run asset sync, which writes under the real
+    // user's `~/.claude`/`~/.ai` and is only correct at a real, user-
+    // identity invocation. See the matching check in cli.py's main().
+    env: { ...process.env, CLAUDESPACE_SKIP_ASSET_SYNC: "1" },
   });
   if (result.status !== 0) {
     console.warn(

@@ -175,15 +175,18 @@ Install Homebrew (https://brew.sh) or pipx (https://pipx.pypa.io) manually and r
 
     BIN_DIR="$(pipx environment --value PIPX_BIN_DIR)"
 
-    echo "Registering bundled commands and prompts..."
-    "$BIN_DIR/claudespace-sync-assets"
-
     # --- one-time environment setup ---------------------------------------
     # A usable terminal setup (iTerm2 + its Python API, or tmux + a viewer),
     # and the claude CLI, used to be checked only on the first real
     # `claudespace` run, which meant a new user was bounced out of the tool
     # two or three times before it did anything. Do it here instead.
     # --no-launch keeps the installer from opening iTerm2.
+    #
+    # This is also the sole trigger for registering the bundled
+    # commands/prompts (AD5): `claudespace doctor` runs through the same
+    # guarded first-run sync as every other invocation, on both channels -
+    # a separate direct `claudespace-sync-assets` call here would just be a
+    # second, redundant trigger for the same thing.
     echo "Checking for a supported terminal setup..."
     "$BIN_DIR/claudespace" doctor --yes --no-launch || DOCTOR_FAILED=1
 
