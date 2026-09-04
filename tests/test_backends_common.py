@@ -25,7 +25,7 @@ def test_launch_command_exports_scoped_marker_dir():
     assert "export CLAUDESPACE_MARKER_DIR=/repo/.claudespace/s/abc-123 &&" in text
 
 
-def test_launch_command_marker_dir_follows_a_worktree_pointer(tmp_path):
+def test_launch_command_marker_dir_stays_at_original_root_with_worktree(tmp_path):
     root = tmp_path / "main"
     worktree = tmp_path / "worktrees" / "feature"
     (root / ".claudespace" / "s" / "abc-123").mkdir(parents=True)
@@ -33,8 +33,17 @@ def test_launch_command_marker_dir_follows_a_worktree_pointer(tmp_path):
     (root / ".claudespace" / "s" / "abc-123" / "worktree").write_text(str(worktree))
 
     text = _launch(str(root), "abc-123")
+    # CLAUDESPACE_ROOT follows the worktree (for code work)
     assert f"export CLAUDESPACE_ROOT={worktree} &&" in text
-    assert f"export CLAUDESPACE_MARKER_DIR={worktree}/.claudespace/s/abc-123 &&" in text
+    # CLAUDESPACE_MARKER_DIR stays at the original root (pipeline state)
+    assert f"export CLAUDESPACE_MARKER_DIR={root}/.claudespace/s/abc-123 &&" in text
+    # CLAUDESPACE_ORIGIN_ROOT records the original root explicitly
+    assert f"export CLAUDESPACE_ORIGIN_ROOT={root} &&" in text
+
+
+def test_launch_command_exports_origin_root():
+    text = _launch("/repo", "abc-123")
+    assert "export CLAUDESPACE_ORIGIN_ROOT=/repo &&" in text
 
 
 # --- idle_completion_decision: sustained idle-at-prompt detection -----------

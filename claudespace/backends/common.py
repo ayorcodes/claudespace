@@ -123,12 +123,16 @@ def launch_command_text(
     ``async_send_text``, tmux via ``send-keys`` - so the pane's launch
     environment can't drift between them. ``root`` is the workspace's
     original launch root; ``resolve_root`` follows a run-scoped worktree
-    marker if one has been created since, same as every other marker-path
-    lookup in the codebase. ``CLAUDESPACE_MARKER_DIR`` is exported so a
-    pane's own prompt-driven writes (``mkdir -p $CLAUDESPACE_MARKER_DIR``,
-    then ``.done``/``.blocked``/etc under it) land in the same per-session
-    subtree ``pipeline.py``'s builders compute from ``(root, instance)`` -
-    see ``session_marker_dir``.
+    marker if one has been created since, so the pane's ``cd`` and
+    ``CLAUDESPACE_ROOT`` land in the worktree for code work.
+
+    ``CLAUDESPACE_MARKER_DIR`` is always anchored at the **original**
+    (unresolved) ``root`` so pipeline markers (``.done``, ``.blocked``,
+    ``conductor-run``, ``think``) stay in one place regardless of whether a
+    worktree was created mid-run. ``CLAUDESPACE_ORIGIN_ROOT`` records the
+    original root explicitly so that ``claudespace-handoff`` /
+    ``claudespace-msg`` can always find markers even when a role re-exports
+    ``CLAUDESPACE_ROOT`` to point at a worktree.
 
     ``CLAUDESPACE_TERMINAL=<backend_name>`` matters more than it looks:
     ``claudespace-handoff``/``claudespace-msg`` run as their *own* process
@@ -144,9 +148,10 @@ def launch_command_text(
     just does nothing.
     """
     effective_root = resolve_root(root, instance)
-    marker_dir = session_marker_dir(effective_root, instance)
+    marker_dir = session_marker_dir(root, instance)
     return (
         f"cd {effective_root} && export CLAUDESPACE_ROOT={effective_root} && "
+        f"export CLAUDESPACE_ORIGIN_ROOT={root} && "
         f"export CLAUDESPACE_ROLE={role} && "
         f"export CLAUDESPACE_INSTANCE={instance} && "
         f"export CLAUDESPACE_MARKER_DIR={marker_dir} && "
