@@ -1,7 +1,11 @@
 # Spike: is psmux tmux-CLI-faithful enough to back claudespace on Windows?
 
-Status: **not yet run.** Go/no-go for the ADR
+Status: **RUN 2026-09-05 — verdict NO-GO** (on the ADR's binary-swap bet;
+see "A path the ADR did not consider" below). Go/no-go for the ADR
 `docs/design/2026-09-03-windows-support-psmux-scoping-adr.md`.
+Executed by `.github/workflows/psmux-spike.yml` on a `windows-latest`
+runner against psmux `v3.3.8` (pinned release zip). Per-probe raw output:
+`docs/research/2026-09-05-psmux-windows-spike-results.md`.
 
 Purpose: convert psmux's *self-reported* tmux compatibility into evidence,
 against the exact primitives `backends/tmux_cli.py` uses — before writing any
@@ -182,10 +186,74 @@ Record raw command output for every box (especially A2/A4/A5/A7) in a results
 section appended below, plus the exact `psmux -V` and install channel, so the
 go/no-go is reproducible and not a vibe.
 
-## Results (fill in when run)
+## Results (run 2026-09-05)
 
-- psmux version: …
-- Install channel: …
-- Part A: A0 … A10 …
-- Part B: pass N/48; failures + root-cause (psmux vs harness): …
-- Verdict: GO / conditional GO / NO-GO — because …
+- psmux version: **3.3.8** (`66cf613`, 2026-08-18). Note `psmux -V` prints
+  **two** lines — `tmux 3.3.8` then `psmux 3.3.8 (...)` — where tmux prints
+  one. `parse_version` tolerates it and yields `(3, 3)`, but it is parsing a
+  string it was never designed for; treat as fragile.
+- Install channel: pinned GitHub release zip, `windows-x64`, via
+  `.github/workflows/psmux-spike.yml` on `windows-latest`.
+
+### Part A — 8/11 pass, 2 MUST fail
+
+| Probe | Level | Result | Note |
+| --- | --- | --- | --- |
+| A0 version parses | MUST | PASS | two-line output, see above |
+| A1 detached server | MUST | PASS | pane id `%1` |
+| **A2 detached capture-pane** | MUST | **PASS** | the zellij wall — psmux clears it |
+| A3 `-J` join | WANT | **FAIL** | `-J` accepted but does **not** join; the token came back split across two lines |
+| **A4 pane `@cs_*` options** | MUST | **FAIL** | `psmux: pane-scoped option '@cs_role' is not supported (supported: remain-on-exit)` |
+| **A5 `@cs_*` in `-F -a`** | MUST | **FAIL** | consequence of A4 — rows come back `%1<US><US>` |
+| A6 `send-keys -l --` | MUST | PASS | leading dash typed literally |
+| A7 paste buffer | MUST | PASS | 3010 chars byte-intact, `paste-buffer -d -p` rc=0 |
+| A8 geometry | WANT | PASS | `120x30`; `select-pane -T` rc=0 |
+| A9 structure ops | MUST | PASS | split/new-window/select-*/kill all rc=0 |
+| A10 socket isolation | MUST | PASS | `-L` namespace invisible to the default socket |
+
+### Part B — 18 passed, 17 failed, one root cause
+
+Every one of the 17 failures is
+`TmuxCommandError: psmux: pane-scoped option '@cs_workspace' is not supported`.
+**None** are attributable to the POSIX-shell/`TMUX_TMPDIR` friction the spike
+anticipated — the classification the gate demanded lands squarely on *psmux
+command gap*. `pip install -e .` on Windows succeeded, and
+`import claudespace.themes` worked: `iterm2` is a pure `py3-none-any` wheel
+(protobuf + websockets; pyobjc only under the `full` extra), so B2 is **not**
+the blocker the spike expected.
+
+### Verdict: **NO-GO** on the binary-swap bet
+
+The gate names A4/A5 explicitly: *"no `@cs_*` per-pane options / not in `-F -a`
+⇒ the identity model needs a rewrite, which means psmux is **not** a swap and
+the core bet failed."* That is exactly what happened, and the failure is
+psmux's own explicit error, not an inference.
+
+Note what this cost: psmux's docs advertise `set-option`'s flags as
+`guaqopswUt:`, which does include `p`. The **flag parses**; the *option
+namespace* behind it is restricted to `remain-on-exit`. Vendor documentation
+was accurate about syntax and silent about semantics — the precise reason the
+ADR insisted on a spike rather than trusting the compatibility table.
+
+What psmux **does** deliver is not nothing: detached `capture-pane` (A2) is the
+wall zellij could not clear, and the paste-buffer path (A7) means the
+large-handoff truncation fix has a working Windows equivalent.
+
+### A path the ADR did not consider
+
+The ADR's fallback is "document WSL2 + tmux, close native Windows". But
+claudespace **already ships a backend with no per-pane key/value store**:
+`backends/cmux.py` carries identity on pane tab titles (`cs:<instance>:<role>`)
+and file-homes the remaining mutable state under the session marker directory.
+A8 confirms `select-pane -T` works on psmux, so that same model is available
+here.
+
+That makes native Windows plausible again — but as a **cmux-style backend
+variant, not a binary swap**, which is the outcome the ADR routes to "a
+*separate* ADR ... it would mean psmux is not CLI-faithful and the core bet
+failed". Decide that there, not here.
+
+Untested and worth one cheap probe before that ADR: whether psmux supports
+`@`-prefixed user options at **server or session** scope. `set -g @theme` works
+in its own docs. If it does, per-pane state could be homed under synthesised
+keys (`@cs_%1_role`) far more cheaply than file-homing.
