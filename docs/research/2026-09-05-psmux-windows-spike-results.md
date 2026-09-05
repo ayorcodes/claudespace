@@ -9,8 +9,8 @@ the workflow instead. Method and pass criteria live in the spike itself:
 | psmux version | `v3.3.8` (pinned release zip, x64) |
 | Runner | `windows-latest` |
 | Python | `3.13` |
-| Commit | `d2e0691f8a3aaf918ecbee0b96eecf24003b5777` |
-| Run | [33955349500](https://github.com/ayorcodes/claudespace/actions/runs/33955349500) |
+| Commit | `66ff0aa750c8a702c07609ce77a0442375ddd794` |
+| Run | [33955513782](https://github.com/ayorcodes/claudespace/actions/runs/33955513782) |
 | Part A step | `failure` |
 
 > **Caveat - ConPTY under CI.** psmux drives ConPTY, and a headless runner
@@ -27,13 +27,13 @@ the workflow instead. Method and pass criteria live in the spike itself:
 | --- | --- | --- | --- |
 | A0 | MUST | `tmux_cli.version / parse_version` | PASS |
 | A1 | MUST | `new_session / has_session` | PASS |
-| A2 | MUST | `capture_pane` | **FAIL** |
+| A2 | MUST | `capture_pane` | PASS |
 | A3 | WANT | `capture_pane (-J join)` | **FAIL** |
 | A4 | MUST | `set_pane_option / show_pane_option` | **FAIL** |
 | A5 | MUST | `list_panes_all` | **FAIL** |
-| A6 | MUST | `send_keys_literal` | **FAIL** |
-| A7 | MUST | `send_text_paste` | **FAIL** |
-| A8 | WANT | `pane_dims / pane_border_title` | **FAIL** |
+| A6 | MUST | `send_keys_literal` | PASS |
+| A7 | MUST | `send_text_paste` | PASS |
+| A8 | WANT | `pane_dims / pane_border_title` | PASS |
 | A9 | MUST | `split_window / new_window / kill_session` | PASS |
 | A10 | MUST | `AD8 dedicated socket` | PASS |
 
@@ -52,8 +52,7 @@ raw='tmux 3.3.8\r\npsmux 3.3.8 (66cf613 2026-08-18)' parsed=(3, 3) floor=(3, 0)
 <details><summary><code>A1</code> [MUST] detached server, inspectable with no client — PASS</summary>
 
 ```
-new-session: tmux 3.3.8
-psmux 3.3.8 (66cf613 2026-08-18)
+new-session: 
 has-session rc=0
 list-panes: %1
 resolved pane id: %1
@@ -61,10 +60,12 @@ resolved pane id: %1
 
 </details>
 
-<details><summary><code>A2</code> [MUST] capture-pane -p -J while DETACHED — FAIL</summary>
+<details><summary><code>A2</code> [MUST] capture-pane -p -J while DETACHED — PASS</summary>
 
 ```
-EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambiguous. Possible matches include: -ProgressAction -PipelineVariable.
+PS D:\a\claudespace\claudespace> echo spike-marker-123
+spike-marker-123
+PS D:\a\claudespace\claudespace>
 ```
 
 </details>
@@ -72,7 +73,12 @@ EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambig
 <details><summary><code>A3</code> [WANT] -J joins a soft-wrapped long line — FAIL</summary>
 
 ```
-EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambiguous. Possible matches include: -ProgressAction -PipelineVariable.
+PS D:\a\claudespace\claudespace> printf
+'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789XYZ
+-END'
+ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789XYZ-
+END
+PS D:\a\claudespace\claudespace>
 ```
 
 </details>
@@ -80,7 +86,8 @@ EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambig
 <details><summary><code>A4</code> [MUST] per-pane @cs_* option round-trips — FAIL</summary>
 
 ```
-EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambiguous. Possible matches include: -ProgressAction -PipelineVariable.
+set rc=1 psmux: pane-scoped option '@cs_role' is not supported (supported: remain-on-exit)
+show => ''
 ```
 
 </details>
@@ -88,31 +95,35 @@ EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambig
 <details><summary><code>A5</code> [MUST] @cs_* interpolate in list-panes -a -F — FAIL</summary>
 
 ```
-EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambiguous. Possible matches include: -ProgressAction -PipelineVariable.
+%1<US><US>
+%2<US><US>
 ```
 
 </details>
 
-<details><summary><code>A6</code> [MUST] send-keys -l -- types a leading dash literally — FAIL</summary>
+<details><summary><code>A6</code> [MUST] send-keys -l -- types a leading dash literally — PASS</summary>
 
 ```
-EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambiguous. Possible matches include: -ProgressAction -PipelineVariable.
-```
-
-</details>
-
-<details><summary><code>A7</code> [MUST] named buffer round-trips >2.5KB, paste-buffer -d -p — FAIL</summary>
-
-```
-EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambiguous. Possible matches include: -ProgressAction -PipelineVariable.
+PS D:\a\claudespace\claudespace> echo spike-marker-123
+spike-marker-123
+PS D:\a\claudespace\claudespace> -not-a-flag typed literally
 ```
 
 </details>
 
-<details><summary><code>A8</code> [WANT] geometry reports real numbers — FAIL</summary>
+<details><summary><code>A7</code> [MUST] named buffer round-trips >2.5KB, paste-buffer -d -p — PASS</summary>
 
 ```
-EXCEPTION: Parameter cannot be processed because the parameter name 'p' is ambiguous. Possible matches include: -ProgressAction -PipelineVariable.
+set rc=0; show len=3010 head='HEAD-xxxxxxx' tail='xxxxxxx-TAIL'; paste rc=0 
+```
+
+</details>
+
+<details><summary><code>A8</code> [WANT] geometry reports real numbers — PASS</summary>
+
+```
+dims => '120x30'
+select-pane -T rc=0 
 ```
 
 </details>
@@ -130,7 +141,7 @@ kill-session rc=0; has-session after kill rc=1 (non-zero expected)
 
 ```
 on -L csspike =>
-isolated: 1 windows (created Sat Sep  5 08:29:09 2026)
+isolated: 1 windows (created Sat Sep  5 08:32:30 2026)
 
 on default socket =>
 
@@ -138,9 +149,9 @@ on default socket =>
 
 </details>
 
-**Part A verdict: NO-GO** — 4/9 MUST passed.
-Failed MUST: A2, A4, A5, A6, A7.
-Failed WANT (tracked workarounds): A3, A8.
+**Part A verdict: NO-GO** — 7/9 MUST passed.
+Failed MUST: A4, A5.
+Failed WANT (tracked workarounds): A3.
 
 
 ### Part B — conformance suite (tests/test_tmux_cli.py, tests/test_tmux_backend.py)
@@ -213,6 +224,6 @@ FAILED tests/test_tmux_backend.py::TestPromptDeliveryAndStall::test_send_role_pr
 FAILED tests/test_tmux_backend.py::TestPromptDeliveryAndStall::test_send_role_prompt_pastes_a_large_prompt_instead_of_streaming_keys - claudespace.backends.tmux_cli.TmuxCommandError: psmux: pane-scoped option '@cs_workspace' is not supported (supported: remain-on-exit)
 FAILED tests/test_tmux_backend.py::TestPromptDeliveryAndStall::test_check_pane_stall_flags_a_dead_pane - claudespace.backends.tmux_cli.TmuxCommandError: psmux: pane-scoped option '@cs_workspace' is not supported (supported: remain-on-exit)
 FAILED tests/test_tmux_backend.py::TestPromptDeliveryAndStall::test_check_pane_stall_never_flags_a_changing_screen - claudespace.backends.tmux_cli.TmuxCommandError: psmux: pane-scoped option '@cs_workspace' is not supported (supported: remain-on-exit)
-17 failed, 18 passed, 1 warning in 23.97s
+17 failed, 18 passed, 1 warning in 28.92s
 ```
 
