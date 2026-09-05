@@ -1,10 +1,13 @@
-"""``claudespace update``: pull the latest code from git and reinstall.
+"""``claudespace update``: bring the installed claudespace up to date.
 
-Mirrors what ``install.sh`` does for a fresh install - clone the repo into a
+Routes by which channel installed the running binary (D6, ``channel.py``):
+the npm channel re-installs the published package; the pipx channel mirrors
+what ``install.sh`` does for a fresh install - clone the repo into a
 throwaway temp directory (pipx installs a built wheel, not a live checkout,
 so there's no local clone to ``git pull``), ``pipx install --force`` from
-it, then re-run ``sync_assets`` so any updated bundled commands/prompts
-overwrite what's in ``~/.claude/commands`` and ``~/.ai/prompts``.
+it. Neither branch re-runs asset sync itself any more - the first-run
+sentinel (``assets_sync.sync_if_needed``, AD5) is per-version, so the next
+``claudespace`` invocation after either upgrade re-syncs on its own.
 """
 
 from __future__ import annotations
@@ -16,11 +19,12 @@ import subprocess
 import sys
 import tempfile
 
-from claudespace.assets_sync import sync_assets
+from claudespace import channel as channel_module
 
 logger = logging.getLogger(__name__)
 
 REPO_URL = "https://github.com/ayorcodes/claudespace.git"
+NPM_PACKAGE = "@ayorcodes/claudespace"
 
 
 def _require(tool: str, hint: str) -> None:
@@ -52,7 +56,37 @@ def _in_pipx_venv(path: str) -> bool:
 
 
 def run_update() -> None:
-    """Re-clone the repo, reinstall via pipx, and resync bundled assets."""
+    """Bring claudespace up to date, routed by install channel (D6).
+
+    Never falls through to the pipx path when the running install is npm -
+    that would leave two competing installs on the machine instead of
+    updating the one actually in use.
+    """
+    channel = channel_module.installed_channel()
+    if channel == "npm":
+        _run_npm_update()
+    else:
+        _run_pipx_update()
+    logger.info("claudespace is up to date.")
+
+
+def _run_npm_update() -> None:
+    _require(
+        "npm",
+        "npm is required to update an npm-installed claudespace. Install "
+        "Node.js (https://nodejs.org) and re-run.",
+    )
+    logger.info("Updating %s via npm...", NPM_PACKAGE)
+    install = subprocess.run(["npm", "install", "-g", f"{NPM_PACKAGE}@latest"])
+    if install.returncode != 0:
+        logger.error(
+            "'npm install -g %s@latest' failed - see output above.", NPM_PACKAGE
+        )
+        sys.exit(1)
+
+
+def _run_pipx_update() -> None:
+    """Re-clone the repo and reinstall via pipx."""
     _require("git", "Install git and re-run.")
     _require(
         "pipx",
@@ -109,11 +143,6 @@ def run_update() -> None:
                 REPO_URL,
             )
             sys.exit(1)
-
-    logger.info("Registering bundled commands and prompts...")
-    sync_assets()
-
-    logger.info("claudespace is up to date.")
 
 
 def main() -> None:

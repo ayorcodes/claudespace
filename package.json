@@ -1,0 +1,26 @@
+{
+  "name": "@ayorcodes/claudespace",
+  "version": "0.1.0",
+  "description": "Open a Claude Code multi-pane terminal workspace with one command (macOS only)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayorcodes/claudespace.git"
+  },
+  "homepage": "https://github.com/ayorcodes/claudespace",
+  "os": [
+    "darwin"
+  ],
+  "bin": {
+    "claudespace": "bin/claudespace.sh",
+    "claudespace-sync-assets": "bin/claudespace-sync-assets.sh",
+    "claudespace-handoff": "bin/claudespace-handoff.sh",
+    "claudespace-guard": "bin/claudespace-guard.sh",
+    "claudespace-msg": "bin/claudespace-msg.sh",
+    "claudespace-update": "bin/claudespace-update.sh",
+    "claudespace-tmux-persist": "bin/claudespace-tmux-persist.sh"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  }
+}

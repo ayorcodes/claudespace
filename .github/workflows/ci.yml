@@ -28,5 +28,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Lint install.sh
-        run: shellcheck -s sh install.sh
+      - name: Lint install.sh and the npm bin/ shims
+        run: shellcheck -s sh install.sh bin/*.sh
+
+  npm-package:
+    # Packaging smoke test (npm distribution, AD1-AD6): pack the tarball,
+    # install it globally into a throwaway prefix, and confirm every
+    # console-script name resolves and doctor/uninstall work - a stand-in
+    # for a real `npm i -g @ayorcodes/claudespace` on a clean machine.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check postinstall/provision script syntax
+        run: node --check scripts/postinstall.js && node --check scripts/provision.js
+      - name: package.json/pyproject.toml version lockstep
+        run: |
+          python3 -c "import tomllib,json,sys; a=tomllib.load(open('pyproject.toml','rb'))['project']['version']; b=json.load(open('package.json'))['version']; sys.exit(a!=b)"
+      - name: Pack and install globally into a throwaway prefix
+        run: |
+          set -eu
+          npm pack
+          mkdir -p "$RUNNER_TEMP/npm-global"
+          npm config set prefix "$RUNNER_TEMP/npm-global"
+          export PATH="$RUNNER_TEMP/npm-global/bin:$PATH"
+          npm install -g ./ayorcodes-claudespace-*.tgz
+          for cmd in claudespace claudespace-handoff claudespace-guard \
+                     claudespace-msg claudespace-update \
+                     claudespace-sync-assets claudespace-tmux-persist; do
+            command -v "$cmd"
+          done
+          test -x "$RUNNER_TEMP/npm-global/lib/node_modules/@ayorcodes/claudespace/.venv/bin/python"
+          test -f "$RUNNER_TEMP/npm-global/lib/node_modules/@ayorcodes/claudespace/.venv/.claudespace-channel"
+          # doctor is expected to report the 'claude' CLI missing on a bare
+          # CI runner (it isn't installed here) - same non-fatal tolerance
+          # postinstall.js itself gives this call (D7 preflight warns, never
+          # fails the install). This step only needs doctor to run cleanly,
+          # not for every check to pass on an incomplete environment.
+          claudespace doctor --yes --no-launch || echo "doctor reported issues (expected: no 'claude' CLI on this runner)"
+          npm rm -g @ayorcodes/claudespace

@@ -17,17 +17,25 @@ on disk - no copy-pasting context between panes.
 ## Install
 
 ```
-curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.sh | sh
+npm i -g @ayorcodes/claudespace
 ```
 
 **You need macOS** and the [Claude Code](https://claude.com/claude-code) CLI,
-installed and logged in. That's it - Python 3.12+, [pipx](https://pipx.pypa.io),
-and iTerm2 are found or installed for you, and iTerm2's Python API is enabled
-as part of the install.
+installed and logged in. That's it - claudespace is a Python tool under the
+hood, but npm provisions its own isolated Python virtualenv for you (Python
+3.12+ is still required and installed via Homebrew if missing), and iTerm2's
+Python API is enabled the first time you run `claudespace`.
 
-If `claudespace` isn't found afterwards, open a new terminal - the installer
-adds it to your `PATH`, which only takes effect in a new shell. It tells you
-exactly what to add if that didn't work.
+No node? Run the installer instead - it installs node via Homebrew if
+needed, then does the same `npm i -g` for you, falling back to a
+[pipx](https://pipx.pypa.io)-based install if node truly can't be provided:
+
+```
+curl -fsSL https://raw.githubusercontent.com/ayorcodes/claudespace/main/install.sh | sh
+```
+
+If `claudespace` isn't found afterwards, open a new terminal - npm's global
+bin dir only takes effect in a new shell.
 
 ## Use it
 
@@ -115,8 +123,8 @@ Maintenance:
 
 ```
 claudespace doctor               # check/repair iTerm2, its Python API, and the claude CLI
-claudespace update               # pull the latest version and resync prompts
-claudespace uninstall            # run this BEFORE `pipx uninstall claudespace`
+claudespace update               # update to the latest version and resync prompts
+claudespace uninstall            # run this BEFORE `npm rm -g @ayorcodes/claudespace` (or `pipx uninstall claudespace`)
 ```
 
 Something not working? Run `claudespace doctor` first - it re-checks and
@@ -509,11 +517,20 @@ immediately available via `--template <name>`, but edits there are lost on
 
 ### What the installer does
 
-In order: finds (or installs) Python 3.12+, installs
-[pipx](https://pipx.pypa.io), installs claudespace into an isolated
-environment, registers the bundled commands/prompts, then runs
-`claudespace doctor` to sort out iTerm2 and its Python API. It finishes by
-checking `claudespace` is actually on your `PATH` in a new shell.
+`npm i -g @ayorcodes/claudespace` installs the package globally, then npm's
+postinstall step finds (or installs, via Homebrew) Python 3.12+, provisions
+an isolated virtualenv inside the package directory, and runs
+`claudespace doctor` to sort out iTerm2 and its Python API. The bundled
+commands/prompts are registered the first time you actually run
+`claudespace` (not at install time - see [Two install channels](#two-install-channels-npm-and-pipx)
+below), and `npm rm -g @ayorcodes/claudespace` removes everything npm put
+down, including the virtualenv.
+
+`install.sh` does the same thing when you don't already have node: it
+installs node via Homebrew if needed, then runs the `npm i -g` above for
+you. If node truly can't be provided, it falls back to installing via
+[pipx](https://pipx.pypa.io) instead - the same pipx path this project has
+always supported.
 
 Each role runs `claude` pinned to a model and effort level. Those defaults
 live in your `~/.config/claudespace/templates.toml`, so you can change any
@@ -605,14 +622,15 @@ may come back as a plain shell rather than a relaunched `claude` - a
 
 ### Bundled commands and prompts
 
-`install.sh` also registers six global slash-commands - `/researcher`,
-`/planner`, `/principal`, `/implementer`, `/reviewer`, `/conductor` - by
-copying their command files into `~/.claude/commands` and their prompts into
+The first time you run `claudespace` after installing (or after an upgrade),
+it also registers six global slash-commands - `/researcher`, `/planner`,
+`/principal`, `/implementer`, `/reviewer`, `/conductor` - by copying their
+command files into `~/.claude/commands` and their prompts into
 `~/.ai/prompts`. Any pane opened by claudespace (or any other Claude Code
 session on the machine) can use them right away. Existing files with the
-same name are always overwritten with the bundled version, so re-running
-the sync after an upgrade picks up fixes - any local edits to a prompt or
-command will be lost. Re-run the sync manually with:
+same name are always overwritten with the bundled version, so this pass
+picks up fixes - any local edits to a prompt or command will be lost.
+Re-run the sync manually with:
 
 ```
 claudespace-sync-assets
@@ -624,9 +642,10 @@ claudespace-sync-assets
 claudespace update
 ```
 
-Pulls the latest claudespace from git into a temporary clone, reinstalls it
-through pipx, and resyncs bundled commands/prompts - the same thing
-`install.sh` does for a fresh install, minus the pipx/iTerm2 setup checks.
+Updates through whichever channel you installed with: `npm install -g
+@ayorcodes/claudespace@latest` on the npm channel, or a fresh pipx
+install from a temporary git clone on the pipx channel. Bundled
+commands/prompts resync automatically the next time you run `claudespace`.
 
 ### Setup checks (`claudespace doctor`)
 
@@ -650,14 +669,28 @@ points you at the GUI toggle instead of writing a setting iTerm2 ignores.
 ### Uninstalling
 
 ```
-claudespace uninstall && pipx uninstall claudespace
+claudespace uninstall && npm rm -g @ayorcodes/claudespace
 ```
 
-Run `claudespace uninstall` **first**. It removes the global `Stop` hook
-from `~/.claude/settings.json` and the bundled commands/prompts. Skipping it
-leaves a hook pointing at a command that no longer exists, which then fails
-on every turn of every Claude Code session on the machine. Your
-`~/.config/claudespace/templates.toml` is left alone.
+(or `claudespace uninstall && pipx uninstall claudespace` on the pipx
+channel.)
+
+Run `claudespace uninstall` **first**, on either channel. It removes the
+global `Stop` hook from `~/.claude/settings.json` and the bundled
+commands/prompts. Skipping it leaves a hook pointing at a command that no
+longer exists, which then fails on every turn of every Claude Code session
+on the machine - npm has no reliable global-uninstall lifecycle hook to run
+this for you automatically, so it has to happen first, by hand. Your
+`~/.config/claudespace/templates.toml` is left alone either way.
+
+### Two install channels: npm and pipx
+
+claudespace can be installed via npm or via pipx - `claudespace update` and
+`claudespace doctor` both detect which one you're on (a marker file written
+at install time) and act accordingly: `update` re-installs through the
+same channel, and `doctor` warns if it finds both installed at once, naming
+which one wins on `PATH` and how to remove the other. Having both is
+supported but not recommended - pick one.
 
 ## License
 
