@@ -22,6 +22,8 @@ param(
 $ErrorActionPreference = "Continue"
 $US = [char]0x1f          # the unit separator tmux_cli.py splits -F output on
 $script:Results = @()
+$script:Pane = $null      # %N id; what tmux_cli.py actually passes
+$script:NarrowPane = $null
 
 function Px {
     # psmux on the spike's dedicated socket. Mirrors tmux_cli._socket_args().
@@ -55,6 +57,7 @@ function Probe {
         Ok = $ok; Raw = $raw
     }
     Write-Host ("   {0}" -f $(if ($ok) { "PASS" } else { "FAIL" }))
+    foreach ($l in ($raw -split "`n")) { Write-Host "      | $l" }
 }
 
 # --- A0 ---------------------------------------------------------------------
@@ -83,16 +86,18 @@ Probe "A1" "MUST" "new_session / has_session" "detached server, inspectable with
     $a = Px new-session -d -s s1 -c $PWD.Path
     $b = Px has-session -t s1
     $c = Px list-panes -t s1 -F "#{pane_id}"
-    $ok = ($b.Code -eq 0) -and ($c.Text -match '^%\d+')
-    @{ Ok = $ok; Raw = "new-session: $($a.Text)`nhas-session rc=$($b.Code)`nlist-panes: $($c.Text)" }
+    $first = ($c.Text -split "`n" | Where-Object { $_ -match '^%\d+' } | Select-Object -First 1)
+    if ($first) { $script:Pane = $first.Trim() }
+    $ok = ($b.Code -eq 0) -and ($null -ne $script:Pane)
+    @{ Ok = $ok; Raw = "new-session: $($a.Text)`nhas-session rc=$($b.Code)`nlist-panes: $($c.Text)`nresolved pane id: $script:Pane" }
 }
 
 # --- A2 --- the crux: the exact thing zellij cannot do (zellij#4508) ---------
 Probe "A2" "MUST" "capture_pane" "capture-pane -p -J while DETACHED" {
-    Px send-keys -t s1 -l -- "echo spike-marker-123" | Out-Null
-    Px send-keys -t s1 Enter | Out-Null
+    Px send-keys -t $script:Pane -l -- "echo spike-marker-123" | Out-Null
+    Px send-keys -t $script:Pane Enter | Out-Null
     Start-Sleep -Milliseconds 800
-    $cap = Px capture-pane -p -J -t s1
+    $cap = Px capture-pane -p -J -t $script:Pane
     @{ Ok = ($cap.Text -match 'spike-marker-123'); Raw = $cap.Text }
 }
 
@@ -100,10 +105,12 @@ Probe "A2" "MUST" "capture_pane" "capture-pane -p -J while DETACHED" {
 Probe "A3" "WANT" "capture_pane (-J join)" "-J joins a soft-wrapped long line" {
     Px new-window -t s1 -n narrow | Out-Null
     Px resize-window -t s1:narrow -x 40 -y 10 | Out-Null
-    Px send-keys -t s1:narrow -l -- "printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789XYZ-END'" | Out-Null
-    Px send-keys -t s1:narrow Enter | Out-Null
+    $np = Px list-panes -t s1:narrow -F "#{pane_id}"
+    $script:NarrowPane = (($np.Text -split "`n" | Where-Object { $_ -match '^%\d+' } | Select-Object -First 1)).Trim()
+    Px send-keys -t $script:NarrowPane -l -- "printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789XYZ-END'" | Out-Null
+    Px send-keys -t $script:NarrowPane Enter | Out-Null
     Start-Sleep -Milliseconds 800
-    $cap = Px capture-pane -p -J -t s1:narrow
+    $cap = Px capture-pane -p -J -t $script:NarrowPane
     # The join worked if the whole token survives on one physical line.
     $joined = $cap.Text -split "`n" | Where-Object { $_ -match 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789XYZ-END' }
     @{ Ok = ($null -ne $joined -and $joined.Count -ge 1); Raw = $cap.Text }
@@ -111,14 +118,14 @@ Probe "A3" "WANT" "capture_pane (-J join)" "-J joins a soft-wrapped long line" {
 
 # --- A4 --- the identity model; what zellij/wezterm lack --------------------
 Probe "A4" "MUST" "set_pane_option / show_pane_option" "per-pane @cs_* option round-trips" {
-    $s = Px set-option -p -t s1 '@cs_role' researcher
-    $g = Px show-options -p -v -t s1 '@cs_role'
+    $s = Px set-option -p -t $script:Pane '@cs_role' researcher
+    $g = Px show-options -p -v -t $script:Pane '@cs_role'
     @{ Ok = ($g.Text.Trim() -eq 'researcher'); Raw = "set rc=$($s.Code) $($s.Text)`nshow => '$($g.Text)'" }
 }
 
 # --- A5 ---------------------------------------------------------------------
 Probe "A5" "MUST" "list_panes_all" "@cs_* interpolate in list-panes -a -F" {
-    Px set-option -p -t s1 '@cs_workspace' '/some/marker' | Out-Null
+    Px set-option -p -t $script:Pane '@cs_workspace' '/some/marker' | Out-Null
     $fmt = "#{pane_id}$US#{@cs_workspace}$US#{@cs_role}"
     $r = Px list-panes -a -F $fmt
     $hit = $r.Text -split "`n" | Where-Object { $_ -match [regex]::Escape("/some/marker") }
@@ -129,9 +136,9 @@ Probe "A5" "MUST" "list_panes_all" "@cs_* interpolate in list-panes -a -F" {
 
 # --- A6 ---------------------------------------------------------------------
 Probe "A6" "MUST" "send_keys_literal" "send-keys -l -- types a leading dash literally" {
-    Px send-keys -t s1 -l -- "-not-a-flag typed literally" | Out-Null
+    Px send-keys -t $script:Pane -l -- "-not-a-flag typed literally" | Out-Null
     Start-Sleep -Milliseconds 500
-    $cap = Px capture-pane -p -J -t s1
+    $cap = Px capture-pane -p -J -t $script:Pane
     @{ Ok = ($cap.Text -match '-not-a-flag typed literally'); Raw = $cap.Text }
 }
 
@@ -141,7 +148,7 @@ Probe "A7" "MUST" "send_text_paste" "named buffer round-trips >2.5KB, paste-buff
     $set = Px set-buffer -b csb -- $big
     $show = Px show-buffer -b csb
     $intact = ($show.Text.Length -ge 3010) -and $show.Text.StartsWith("HEAD-") -and $show.Text.TrimEnd().EndsWith("-TAIL")
-    $paste = Px paste-buffer -d -p -b csb -t s1
+    $paste = Px paste-buffer -d -p -b csb -t $script:Pane
     $ok = $intact -and ($paste.Code -eq 0)
     $summary = "set rc=$($set.Code); show len=$($show.Text.Length) head='$($show.Text.Substring(0,[Math]::Min(12,$show.Text.Length)))' tail='$($show.Text.Substring([Math]::Max(0,$show.Text.Length-12)))'; paste rc=$($paste.Code) $($paste.Text)"
     @{ Ok = $ok; Raw = $summary }
@@ -149,8 +156,8 @@ Probe "A7" "MUST" "send_text_paste" "named buffer round-trips >2.5KB, paste-buff
 
 # --- A8 ---------------------------------------------------------------------
 Probe "A8" "WANT" "pane_dims / pane_border_title" "geometry reports real numbers" {
-    $d = Px display-message -p -t s1 "#{pane_width}x#{pane_height}"
-    $t = Px select-pane -t s1 -T researcher
+    $d = Px display-message -p -t $script:Pane "#{pane_width}x#{pane_height}"
+    $t = Px select-pane -t $script:Pane -T researcher
     @{ Ok = ($d.Text -match '^\d+x\d+$'); Raw = "dims => '$($d.Text)'`nselect-pane -T rc=$($t.Code) $($t.Text)" }
 }
 
@@ -158,7 +165,7 @@ Probe "A8" "WANT" "pane_dims / pane_border_title" "geometry reports real numbers
 Probe "A9" "MUST" "split_window / new_window / kill_session" "structure ops" {
     $sp = Px split-window -t s1
     $nw = Px new-window -t s1 -n extra
-    $sel = Px select-pane -t s1
+    $sel = Px select-pane -t $script:Pane
     $selw = Px select-window -t s1:extra
     $panes = Px list-panes -a -F "#{pane_id}"
     $count = ($panes.Text -split "`n" | Where-Object { $_ -match '^%\d+' }).Count
