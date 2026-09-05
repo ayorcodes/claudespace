@@ -159,8 +159,13 @@ jobs:
           }
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add $env:RESULTS
-          if (git diff --cached --quiet) { Write-Host "no change"; exit 0 }
+          # -f: .gitignore lists docs/, yet the tracked docs live there. Without
+          # this the results file is silently never staged.
+          git add -f $env:RESULTS
+          # Check git's EXIT CODE. `if (git diff --cached --quiet)` tests stdout,
+          # which is always empty, so the guard never fires.
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host "no change"; exit 0 }
           git commit -m "Record psmux spike results (${{ inputs.psmux_version }}, run ${{ github.run_id }})"
           git push origin HEAD:$env:GITHUB_REF_NAME
 
