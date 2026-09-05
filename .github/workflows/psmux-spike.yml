@@ -1,0 +1,171 @@
+# Go/no-go spike for native Windows support via psmux.
+#
+#   Spike:  docs/research/2026-09-03-psmux-windows-spike.md
+#   ADR:    docs/design/2026-09-03-windows-support-psmux-scoping-adr.md
+#
+# Manual dispatch only - this is an experiment, not part of CI. It writes its
+# findings to a committed markdown file so the go/no-go is reproducible from
+# the repo rather than from a run log that expires.
+name: psmux spike
+
+on:
+  workflow_dispatch:
+    inputs:
+      psmux_version:
+        description: "psmux release tag to pin (evidence is worthless unless versioned)"
+        default: "v3.3.8"
+      python_version:
+        description: "Python for Part B"
+        default: "3.13"
+
+permissions:
+  contents: write
+
+jobs:
+  spike:
+    runs-on: windows-latest
+    env:
+      RESULTS: docs/research/2026-09-05-psmux-windows-spike-results.md
+      SOCK: csspike
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax-check the probe script
+        run: |
+          $errs = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/.github/scripts/psmux-spike.ps1", [ref]$null, [ref]$errs)
+          if ($errs) { $errs | ForEach-Object { $_.ToString() }; exit 1 }
+          "probe script parses clean"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      # B2. The spike doc flags themes.py's module-scope `import iterm2` as a
+      # possible Windows blocker. It should not be: iterm2 publishes a pure
+      # `py3-none-any` wheel whose hard deps are protobuf + websockets, with
+      # pyobjc behind the `full` extra. This step is what settles it.
+      - name: B2 - install claudespace on Windows
+        id: b2
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          python -c "import claudespace.themes; print('themes imported OK (iterm2 present)')"
+
+      - name: Install psmux ${{ inputs.psmux_version }}
+        run: |
+          $tag = "${{ inputs.psmux_version }}"
+          $url = "https://github.com/psmux/psmux/releases/download/$tag/psmux-$tag-windows-x64.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile psmux.zip
+          Expand-Archive psmux.zip -DestinationPath psmux-bin -Force
+          $exe = Get-ChildItem psmux-bin -Recurse -Filter psmux.exe | Select-Object -First 1
+          if (-not $exe) { throw "psmux.exe not found in the release zip" }
+          $dir = $exe.Directory.FullName
+          # B1: tmux_cli.run() execs the literal name `tmux`. Use psmux's own
+          # alias if the release ships one, else shim it.
+          if (-not (Test-Path (Join-Path $dir "tmux.exe"))) {
+            Set-Content -Path (Join-Path $dir "tmux.bat") `
+              -Value "@echo off`r`n`"%~dp0psmux.exe`" %*"
+            Write-Host "no bundled tmux alias - wrote tmux.bat shim"
+          } else {
+            Write-Host "release ships its own tmux.exe alias"
+          }
+          # Prepend, so this pinned build wins over anything preinstalled.
+          "$dir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Record environment
+        run: |
+          "psmux -V  : $(psmux -V)"
+          "tmux -V   : $(tmux -V)"
+          "python    : $(python --version)"
+
+      - name: Part A - CLI probes
+        id: parta
+        continue-on-error: true
+        run: |
+          .\.github\scripts\psmux-spike.ps1 `
+            -Bin psmux -Sock $env:SOCK -OutFile partA.md -Python python
+
+      - name: Part B - real conformance suite against psmux
+        id: partb
+        continue-on-error: true
+        run: |
+          # B3. Expected friction unrelated to psmux fidelity: TMUX_TMPDIR and
+          # the FAKE_CLAUDE snippet assume a POSIX shell. The report must keep
+          # "psmux can't do X" separate from "the harness assumed POSIX", so
+          # this step records raw output and does not judge.
+          $out = & python -m pytest tests/test_tmux_cli.py tests/test_tmux_backend.py `
+                   -q -rf --tb=line 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $lines = @()
+          $lines += "### Part B — conformance suite (tests/test_tmux_cli.py, tests/test_tmux_backend.py)"
+          $lines += ""
+          $lines += "- ``pip install -e .`` on Windows: **${{ steps.b2.outcome }}**"
+          $lines += "- pytest exit code: ``$code``"
+          $lines += ""
+          $lines += "> Failures below are **unclassified**. Before quoting them in the verdict,"
+          $lines += "> split them into *psmux command gaps* (count against the bet) and"
+          $lines += "> *POSIX-shell assumptions in the harness* (do not)."
+          $lines += ""
+          $lines += '```'
+          $lines += $out.TrimEnd()
+          $lines += '```'
+          $lines -join "`n" | Out-File -FilePath partB.md -Encoding utf8
+          Write-Host $out
+
+      - name: Assemble results markdown
+        if: always()
+        run: |
+          $partA = if (Test-Path partA.md) { Get-Content partA.md -Raw } else { "_Part A did not produce output._" }
+          $partB = if (Test-Path partB.md) { Get-Content partB.md -Raw } else { "_Part B did not run._" }
+          $runUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $h = @()
+          $h += "# Results: psmux Windows spike"
+          $h += ""
+          $h += "Generated by ``.github/workflows/psmux-spike.yml`` - do not hand-edit; re-run"
+          $h += "the workflow instead. Method and pass criteria live in the spike itself:"
+          $h += "``docs/research/2026-09-03-psmux-windows-spike.md``."
+          $h += ""
+          $h += "| | |"
+          $h += "| --- | --- |"
+          $h += "| psmux version | ``${{ inputs.psmux_version }}`` (pinned release zip, x64) |"
+          $h += "| Runner | ``windows-latest`` |"
+          $h += "| Python | ``${{ inputs.python_version }}`` |"
+          $h += "| Commit | ``${{ github.sha }}`` |"
+          $h += "| Run | [${{ github.run_id }}]($runUrl) |"
+          $h += "| Part A step | ``${{ steps.parta.outcome }}`` |"
+          $h += ""
+          $h += "> **Caveat - ConPTY under CI.** psmux drives ConPTY, and a headless runner"
+          $h += "> session is not identical to a real desktop. A pass here is strong evidence."
+          $h += "> A failure of **A2** (detached ``capture-pane``) specifically should be"
+          $h += "> re-run on a physical Windows box before it is allowed to decide NO-GO."
+          $h += ">"
+          $h += "> **B4 (the ``wt.exe`` viewer probe) cannot run here** - no desktop session."
+          $h += "> It is informational and already outside the go/no-go gate."
+          $h += ""
+          $body = ($h -join "`n") + "`n" + $partA + "`n`n" + $partB
+          $body | Out-File -FilePath $env:RESULTS -Encoding utf8
+          $body | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Commit results
+        if: always()
+        run: |
+          if ($env:GITHUB_REF_NAME -eq "main") {
+            Write-Host "::notice::On main - not committing. Results are in the job summary; re-run from a branch to have them committed."
+            exit 0
+          }
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $env:RESULTS
+          if (git diff --cached --quiet) { Write-Host "no change"; exit 0 }
+          git commit -m "Record psmux spike results (${{ inputs.psmux_version }}, run ${{ github.run_id }})"
+          git push origin HEAD:$env:GITHUB_REF_NAME
+
+      - name: Fail if a MUST probe failed
+        if: always() && steps.parta.outcome == 'failure'
+        run: |
+          Write-Host "::error::A [MUST] probe failed - see $env:RESULTS. Per the spike's gate this is NO-GO unless it is A2 under ConPTY, which needs a physical retest."
+          exit 1
